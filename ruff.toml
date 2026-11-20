@@ -1,0 +1,13 @@
+# Lint configuration (optional): pip install ruff && ruff check .
+line-length = 110
+target-version = "py310"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# RunStatus(str, Enum) is kept instead of StrEnum so Python 3.10 stays supported.
+ignore = ["UP042"]
+
+[lint.per-file-ignores]
+# Prompt text is deliberately written as long natural-language lines.
+"phil/prompts.py" = ["E501"]
+"tests/*" = ["E501"]

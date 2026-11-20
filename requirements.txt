@@ -1,0 +1,5 @@
+# Phil runtime dependencies (unpinned: pip installs the latest release of each).
+uiautomator2
+python-dotenv
+openai
+rich
