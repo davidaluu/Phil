@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -48,6 +49,8 @@ class Settings:
     log_file: str | None = None
     max_steps: int = 30
     stabilize_delay: float = 1.0
+    shortcuts_dir: str = "shortcuts"
+    shortcut_overlap: float = 0.75
     confirm_risky: bool = True
     always_send_full_tree: bool = False
     overlap_threshold: float = 0.4
@@ -100,6 +103,8 @@ def _read_number(
         value = cast(raw)
     except ValueError:
         raise ConfigError(f"{name} must be a number (got {raw!r}).") from None
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ConfigError(f"{name} must be a finite number (got {raw!r}).")
     if minimum is not None and value < minimum:
         raise ConfigError(f"{name} must be at least {minimum} (got {value}).")
     if maximum is not None and value > maximum:
@@ -160,6 +165,10 @@ def load_settings(*, require_api_key: bool = True) -> Settings:
         log_file=_read("LOG_FILE"),
         max_steps=_read_number("MAX_STEPS", 30, int, minimum=1, maximum=500),
         stabilize_delay=_read_number("STABILIZE_DELAY", 1.0, float, minimum=0.0, maximum=10.0),
+        shortcuts_dir=_read("SHORTCUTS_DIR") or "shortcuts",
+        shortcut_overlap=_read_number(
+            "SHORTCUT_OVERLAP", 0.75, float, minimum=0.0, maximum=1.0
+        ),
         confirm_risky=_read_bool("CONFIRM_RISKY", True),
         always_send_full_tree=_read_bool("ALWAYS_SEND_FULL_TREE", False),
         overlap_threshold=_read_number("OVERLAP_THRESHOLD", 0.4, float, minimum=0.0, maximum=1.0),

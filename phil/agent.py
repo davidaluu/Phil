@@ -25,6 +25,7 @@ from phil.prompts import (
     build_planner_user_prompt,
 )
 from phil.screen import ScreenError, ScreenState, ScreenTracker
+from phil.shortcuts import RunCapture, Shortcut, record_step, replay_shortcut
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,9 @@ class _RunContext:
     just_confirmed: bool = False
     user_approved: bool = False
     unchanged_click_signature: str | None = None
+    recorded_steps: list[dict[str, Any]] = field(default_factory=list)
+    password_type_targeted: bool = False
+    completed_steps: int = 0
 
 
 class Agent:
@@ -125,8 +129,14 @@ class Agent:
         self._executor = ActionExecutor(device, self._tracker, sleep)
         self._planner_prompt = build_planner_prompt()
         self._agent_prompt = build_agent_prompt(settings.stuck_threshold)
+        self._last_run: RunCapture | None = None
 
     # ------------------------------------------------------------------ public
+
+    @property
+    def last_run(self) -> RunCapture | None:
+        """The most recent run, including whether it completed successfully."""
+        return self._last_run
 
     def run(self, goal: str) -> RunResult:
         """Plan and execute ``goal``. Never raises for expected failures; see ``RunResult``."""
@@ -134,16 +144,73 @@ class Agent:
         if not goal:
             raise ValueError("The goal must not be empty.")
 
+        self._last_run = None
         self._tracker.reset()
         logger.info("Goal: %s", goal)
         try:
             plan = self._make_plan(goal)
         except ModelError as exc:
             logger.error("Could not create a plan: %s", exc)
+            self._last_run = RunCapture(goal, [], [], False)
             return RunResult(RunStatus.FAILED, 0, f"Model error while planning: {exc}")
 
         logger.info("Plan:\n%s", "\n".join(f"  {i}. {step}" for i, step in enumerate(plan, 1)))
-        return self._loop(_RunContext(goal=goal, plan=plan))
+        ctx = _RunContext(goal=goal, plan=plan)
+        result = self._loop(ctx)
+        self._capture_run(ctx, result)
+        return result
+
+    def run_shortcut(self, shortcut: Shortcut) -> RunResult:
+        """Replay a shortcut, falling back to the AI from the first unsafe step."""
+        plan = list(shortcut.plan) or [shortcut.goal]
+        ctx = _RunContext(goal=shortcut.goal, plan=plan)
+        outcome = replay_shortcut(
+            shortcut,
+            self._tracker,
+            self._device.dump_ui,
+            self._executor.execute,
+            lambda action: self._authorize_shortcut_action(ctx, action),
+            self._sleep,
+            overlap_threshold=self._settings.shortcut_overlap,
+            stabilize_delay=self._settings.stabilize_delay,
+        )
+        ctx.recorded_steps.extend(outcome.replayed_steps)
+        ctx.history.extend(outcome.history)
+        ctx.completed_steps = len(outcome.replayed_steps)
+
+        if outcome.completed:
+            result = RunResult(RunStatus.COMPLETED, ctx.completed_steps, "Shortcut completed.")
+        elif outcome.aborted:
+            result = RunResult(RunStatus.ABORTED, ctx.completed_steps, outcome.reason)
+        else:
+            ctx.plan_index = min(ctx.completed_steps, len(ctx.plan) - 1)
+            result = self._loop(ctx)
+
+        self._capture_run(ctx, result)
+        return result
+
+    def _capture_run(self, ctx: _RunContext, result: RunResult) -> None:
+        self._last_run = RunCapture(
+            goal=ctx.goal,
+            plan=list(ctx.plan),
+            steps=list(ctx.recorded_steps),
+            completed=result.success,
+            password_type_targeted=ctx.password_type_targeted,
+        )
+
+    def _authorize_shortcut_action(self, ctx: _RunContext, action: Action) -> bool:
+        if action.name == "type":
+            node = self._tracker.find(action.target)
+            if node is not None and node.password:
+                ctx.password_type_targeted = True
+        reason = self._risk_reason(ctx, action)
+        if reason is None:
+            return True
+        assert self._confirm is not None
+        if self._confirm(f"{reason}\n  Phil wants to run: {action.summary_line()}"):
+            return True
+        logger.warning("Action declined by the user.")
+        return False
 
     # ---------------------------------------------------------------- planning
 
@@ -175,7 +242,7 @@ class Agent:
 
     def _loop(self, ctx: _RunContext) -> RunResult:
         max_steps = self._settings.max_steps
-        for step in range(1, max_steps + 1):
+        for step in range(ctx.completed_steps + 1, max_steps + 1):
             logger.info(
                 "Step %d/%d | plan step %d/%d: %s",
                 step,
@@ -305,6 +372,11 @@ class Agent:
                 logger.warning("Action declined by the user.")
                 return RunResult(RunStatus.ABORTED, step, "You declined a risky action.")
 
+        if action.name == "type":
+            node = self._tracker.find(action.target)
+            if node is not None and node.password:
+                ctx.password_type_targeted = True
+        captured_step = record_step(action, self._tracker)
         result = self._executor.execute(action)
         level = logging.INFO if result.ok else logging.WARNING
         logger.log(level, "Result: %s", result.detail)
@@ -314,6 +386,8 @@ class Agent:
         )
 
         if result.ok:
+            ctx.recorded_steps.append(captured_step)
+            ctx.completed_steps += 1
             ctx.errors = 0
             if action.name == "click":
                 post_click = self._observe_after_click(ctx, action)

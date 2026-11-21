@@ -510,6 +510,29 @@ class ScreenTracker:
             prompt_text=prompt_text,
         )
 
+    def expected_keys(self, target: str | None = None, *, climb: bool = False) -> list[str]:
+        """Return up to eight stable screen keys, including the resolved action target."""
+        target_node = self.find(target, climb=climb) if target else None
+        target_element = next(
+            (element for element in self._elements if element.node is target_node), None
+        )
+        target_key = target_element.key if target_element is not None else None
+        stable = [element.key for element in self._elements if not element.key.startswith("pos:")]
+        stable.sort(key=lambda key: (not key.startswith("id:"), key))
+
+        selected: list[str] = []
+        if target_key and not target_key.startswith("pos:"):
+            selected.append(target_key)
+        selected.extend(key for key in stable if key not in selected)
+        return selected[:8]
+
+    def overlap_fraction(self, expected_keys: list[str]) -> float:
+        """Return the fraction of recorded keys present in the current screen."""
+        if not expected_keys:
+            return 1.0
+        current = {element.key for element in self._elements}
+        return sum(key in current for key in expected_keys) / len(expected_keys)
+
     # ------------------------------------------------------------ resolution
 
     def screen_bounds(self) -> tuple[int, int, int, int] | None:
