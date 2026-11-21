@@ -94,6 +94,7 @@ class _RunContext:
     repeats: int = 0
     just_confirmed: bool = False
     user_approved: bool = False
+    unchanged_click_signature: str | None = None
 
 
 class Agent:
@@ -189,6 +190,8 @@ class Agent:
                 return RunResult(screen.status, step, screen.message)
             if screen is None:
                 continue
+            if ctx.unchanged_click_signature is not None and screen.changed:
+                ctx.unchanged_click_signature = None
             logger.info("Screen: %s", screen.describe())
 
             action = self._decide(ctx, screen)
@@ -274,6 +277,19 @@ class Agent:
         if action.name == "confirm":
             return self._handle_confirm(ctx, action, step)
 
+        if (
+            action.name == "click"
+            and ctx.unchanged_click_signature is not None
+            and action.signature == ctx.unchanged_click_signature
+        ):
+            ctx.history.append(
+                f"{len(ctx.history) + 1}. {action.signature} -> "
+                "Already clicked; the UI tree doesn't show this change. "
+                "Treat it as done and go to the next step."
+            )
+            logger.info("Skipped duplicate click; UI was unchanged after the previous tap.")
+            return self._advance_plan(ctx, step)
+
         if self._is_repeating(ctx, action, screen):
             message = (
                 f"Repeated '{action.summary_line()}' more than {self._settings.stuck_threshold} "
@@ -299,23 +315,64 @@ class Agent:
 
         if result.ok:
             ctx.errors = 0
+            if action.name == "click":
+                post_click = self._observe_after_click(ctx, action)
+                if post_click is not None and not post_click.changed:
+                    ctx.unchanged_click_signature = action.signature
+                    ctx.history.append(
+                        f"{len(ctx.history) + 1}. "
+                        "Already clicked; the UI tree doesn't show this change. "
+                        "Treat it as done and go to the next step."
+                    )
+                    ctx.history.append(
+                        f"{len(ctx.history) + 1}. "
+                        "clicked; no visible UI change; toggles often don't change the UI tree; "
+                        "treat as applied."
+                    )
+                    return self._advance_plan(ctx, step)
+
+                ctx.unchanged_click_signature = None
+
+            if action.name != "click":
+                ctx.unchanged_click_signature = None
+
             if action.plan_step_done:
-                ctx.plan_index += 1
-                if ctx.plan_index >= len(ctx.plan):
-                    logger.info("Final plan step completed.")
-                    return RunResult(RunStatus.COMPLETED, step, "All plan steps completed.")
-                logger.info(
-                    "Plan step done. Next: %d/%d %s",
-                    ctx.plan_index + 1,
-                    len(ctx.plan),
-                    ctx.plan[ctx.plan_index],
-                )
+                return self._advance_plan(ctx, step)
         else:
             failure = self._fail_or_retry(ctx, "The action failed", RuntimeError(result.detail))
             if failure is not None:
                 return RunResult(failure.status, step, failure.message)
 
-        self._sleep(self._settings.stabilize_delay * _DELAY_MULTIPLIERS.get(action.name, 1.0))
+        if action.name != "click":
+            self._sleep(self._settings.stabilize_delay * _DELAY_MULTIPLIERS.get(action.name, 1.0))
+        return None
+
+    def _observe_after_click(
+        self, ctx: _RunContext, action: Action
+    ) -> ScreenState | None:
+        """Wait for the click to settle and read the resulting UI once."""
+        self._sleep(
+            self._settings.stabilize_delay
+            * _DELAY_MULTIPLIERS.get(action.name, 1.0)
+        )
+        try:
+            return self._tracker.update(self._device.dump_ui())
+        except (DeviceError, ScreenError) as exc:
+            logger.warning("Could not verify the screen after click: %s", exc)
+            return None
+
+    def _advance_plan(self, ctx: _RunContext, step: int) -> RunResult | None:
+        """Complete the current plan step and stop if it was the final step."""
+        ctx.plan_index += 1
+        if ctx.plan_index >= len(ctx.plan):
+            logger.info("Final plan step completed.")
+            return RunResult(RunStatus.COMPLETED, step, "All plan steps completed.")
+        logger.info(
+            "Plan step done. Next: %d/%d %s",
+            ctx.plan_index + 1,
+            len(ctx.plan),
+            ctx.plan[ctx.plan_index],
+        )
         return None
 
     def _handle_confirm(self, ctx: _RunContext, action: Action, step: int) -> RunResult | None:

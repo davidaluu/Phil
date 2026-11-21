@@ -235,6 +235,33 @@ Runs a single task, then exits. The exit code is `0` on success, so you can scri
 
 Press **Ctrl+C**. Phil stops the run and, in interactive mode, returns to the prompt.
 
+### Shortcuts
+
+After a task completes in interactive mode, save its successful actions with `save <name>`.
+Phil refuses to save an incomplete run or any run that typed into a password field. If the
+name already exists, Phil asks before replacing it. `list` shows saved shortcuts, and
+`run <number>` or `run <name>` replays one. `delete <number>` or `delete <name>` shows
+the shortcut name and step count before asking for confirmation; answering anything other
+than `y` or `yes` cancels. A successful deletion prints the updated list.
+
+From the command line, use `python main.py --list-shortcuts`, `python main.py --run "dark
+mode"`, or `python main.py --delete "dark mode"`. Deletion asks the same confirmation;
+pass `--yes` to skip it.
+
+Replay does not call the model while each screen check and action succeeds. Before every
+recorded action, Phil reads the current screen and checks how many of that step's recorded
+element keys remain present. The minimum matching fraction is `SHORTCUT_OVERLAP` (default
+`0.75`). If the screen differs too much or an action fails, Phil warns and continues from
+that step with the stored goal and plan using the normal AI loop. Risky-action confirmations
+still apply during replay.
+
+Shortcuts are individual JSON files in `SHORTCUTS_DIR` (default `shortcuts/`), which is
+git-ignored. Each file stores its name, goal, plan, creation time, and action steps with
+screen keys. Phil does not add the device serial or API key, but goals, targets, and typed
+text can contain personal details. **Typed text is included in the action data as plain
+text**, so keep shortcut files private. A hand-written format example is in
+[`examples/shortcuts/`](examples/shortcuts/).
+
 ### Command-line options
 
 | Option | Meaning |
@@ -244,6 +271,8 @@ Press **Ctrl+C**. Phil stops the run and, in interactive mode, returns to the pr
 | `-y`, `--yes` | Do **not** ask for confirmation before risky actions |
 | `--log-level LEVEL` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `--list-devices` | Show connected phones and exit |
+| `--list-shortcuts` | List saved shortcuts and exit |
+| `--run NAME` | Replay a saved shortcut |
 | `--version` | Print the version |
 
 ### Exit codes
@@ -354,6 +383,8 @@ Set these in `.env` (see `.env.example`). Real environment variables override `.
 | `IGNORED_PACKAGES` | `com.android.systemui` | Packages hidden from the model; `none` shows all |
 | `MAX_STEPS` | `30` | Step limit per task |
 | `STABILIZE_DELAY` | `1.0` | Seconds to wait after an action (0.7–1.5 works well) |
+| `SHORTCUTS_DIR` | `shortcuts` | Folder where shortcut JSON files are saved |
+| `SHORTCUT_OVERLAP` | `0.75` | Minimum matching screen-key fraction for replay (0–1) |
 | `CONFIRM_RISKY` | `true` | Ask before risky actions |
 | `ALWAYS_SEND_FULL_TREE` | `false` | Send the whole tree every step (more tokens, easier for weaker models) |
 | `OVERLAP_THRESHOLD` | `0.4` | Below this share of matching elements, a screen counts as new |

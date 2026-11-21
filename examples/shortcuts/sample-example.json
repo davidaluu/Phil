@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "name": "example-screen-brightness",
+  "aliases": [],
+  "goal": "Open a sample display screen and set brightness",
+  "plan": [
+    "Open the sample display screen",
+    "Set brightness to the example level"
+  ],
+  "created": "2026-01-01T00:00:00+00:00",
+  "steps": [
+    {
+      "action": {
+        "action": "click",
+        "target": "sample.settings:id/display"
+      },
+      "expects": [
+        "id:sample.settings:id/display",
+        "id:sample.settings:id/sound",
+        "text:TextView|Example Settings"
+      ]
+    },
+    {
+      "action": {
+        "action": "set_progress",
+        "target": "sample.settings:id/brightness",
+        "value": 0.6
+      },
+      "expects": [
+        "id:sample.settings:id/brightness",
+        "id:sample.settings:id/display",
+        "text:TextView|Brightness"
+      ]
+    }
+  ]
+}

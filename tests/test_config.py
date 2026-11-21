@@ -8,7 +8,8 @@ from phil.config import ConfigError, load_settings
 _VARS = [
     "API_KEY", "API_BASE_URL", "MODEL_NAME", "PLANNER_MODEL_NAME", "AGENT_MODEL_NAME",
     "JSON_MODE", "TEMPERATURE", "MAX_STEPS", "CONFIRM_RISKY", "LOG_LEVEL",
-    "IGNORED_PACKAGES", "STABILIZE_DELAY", "OVERLAP_THRESHOLD", "STUCK_THRESHOLD",
+    "IGNORED_PACKAGES", "STABILIZE_DELAY", "SHORTCUTS_DIR", "SHORTCUT_OVERLAP",
+    "OVERLAP_THRESHOLD", "STUCK_THRESHOLD",
 ]
 
 
@@ -33,6 +34,7 @@ def test_defaults_and_model_fallbacks(monkeypatch):
     settings = load_settings()
     assert settings.planner_model == settings.agent_model == "m"
     assert settings.confirm_risky is True and settings.max_steps == 30
+    assert settings.shortcuts_dir == "shortcuts" and settings.shortcut_overlap == 0.75
     monkeypatch.setenv("AGENT_MODEL_NAME", "big")
     assert load_settings().agent_model == "big"
 
@@ -50,6 +52,17 @@ def test_parsing_and_validation(monkeypatch):
     with pytest.raises(ConfigError):
         load_settings()
     monkeypatch.setenv("MAX_STEPS", "10")
+    monkeypatch.setenv("SHORTCUTS_DIR", "my-shortcuts")
+    monkeypatch.setenv("SHORTCUT_OVERLAP", "0.8")
+    settings = load_settings()
+    assert settings.shortcuts_dir == "my-shortcuts" and settings.shortcut_overlap == 0.8
+    monkeypatch.setenv("SHORTCUT_OVERLAP", "1.1")
+    with pytest.raises(ConfigError):
+        load_settings()
+    monkeypatch.setenv("SHORTCUT_OVERLAP", "nan")
+    with pytest.raises(ConfigError):
+        load_settings()
+    monkeypatch.setenv("SHORTCUT_OVERLAP", "0.75")
     monkeypatch.setenv("LOG_LEVEL", "LOUD")
     with pytest.raises(ConfigError):
         load_settings()
