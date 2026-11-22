@@ -1,0 +1,16 @@
+[project]
+name = "phil"
+version = "0.1.0"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=3.57.0",
+    "python-dotenv>=1.2.4",
+    "rich>=15.0.0",
+    "uiautomator2>=3.7.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

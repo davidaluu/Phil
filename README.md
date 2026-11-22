@@ -160,6 +160,13 @@ pip install --upgrade -r requirements.txt
 
 > **A note on unpinned versions.** Always installing the newest releases means you get the latest fixes, but a future release could change behaviour and break Phil. If that happens, find the version that last worked (`pip list` shows what you have) and pin just that package, for example `openai==1.2.3`, in `requirements.txt`.
 
+### Install with uv
+
+```bash
+uv sync
+uv run python main.py
+```
+
 ---
 
 ## Step 4 — Configure your API key
