@@ -1,0 +1,43 @@
+{
+  "format_version": 1,
+  "run_id": "20261121T203000-example-stuck",
+  "task": "Open the made-up forecast",
+  "start_time": "2026-11-21T20:30:00+01:00",
+  "end_time": "2026-11-21T20:30:05+01:00",
+  "status": "stuck",
+  "status_message": "Repeated 'click target='Forecast'' more than 4 times without the screen changing.",
+  "total_steps": 5,
+  "total_seconds": 5.4,
+  "total_tokens": 310,
+  "run_type": {"kind": "shortcut", "handover_step": 3, "handover_reason": "screen matched only 50%"},
+  "keep": false,
+  "model_calls": [],
+  "steps": [
+    {
+      "number": 1,
+      "time": "2026-11-21T20:30:01+01:00",
+      "duration_seconds": 0.9,
+      "screen": {"mode": "full", "full_tree": true, "changed": true, "reason": "first step", "elements": [
+        {"key": "text:Forecast", "text": "Forecast", "description": "", "bounds": [100, 300, 900, 420], "traits": ["clickable"]}
+      ]},
+      "action": {"action": "click", "target": "Forecast", "reason": "Open forecast", "summary_line": "click target='Forecast'"},
+      "result": {"ok": true, "status": "OK", "error": null, "detail": "Tapped 'Forecast'."},
+      "guards": {},
+      "screen_after": {"changed": false, "mode": "full"}
+    },
+    {
+      "number": 2,
+      "time": "2026-11-21T20:30:03+01:00",
+      "duration_seconds": 0.7,
+      "screen": {"mode": "full", "full_tree": true, "changed": false, "reason": "no visible changes", "elements": []},
+      "action": {"action": "click", "target": "Forecast", "reason": "Try again", "summary_line": "click target='Forecast'"},
+      "result": {"ok": false, "status": "FAILED", "error": "The tap was delivered, but the screen did not change.", "detail": "The tap was delivered, but the screen did not change."},
+      "guards": {"repeat_guard": true, "stuck_counter": 5},
+      "recovered": false
+    }
+  ],
+  "summary": {"text": "Phil tried the same forecast control repeatedly while the screen stayed the same. The repeat guard stopped the run.", "ai_written": false},
+  "why_stopped": {"sentence": "The repeat guard stopped Phil because the Forecast action was repeated 5 times and the screen did not change.", "last_action": "click target='Forecast'"},
+  "last_action": "click target='Forecast'",
+  "password_type_targeted": false
+}

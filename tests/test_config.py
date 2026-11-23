@@ -10,6 +10,9 @@ _VARS = [
     "JSON_MODE", "TEMPERATURE", "MAX_STEPS", "CONFIRM_RISKY", "LOG_LEVEL",
     "IGNORED_PACKAGES", "STABILIZE_DELAY", "SHORTCUTS_DIR", "SHORTCUT_OVERLAP",
     "OVERLAP_THRESHOLD", "STUCK_THRESHOLD",
+    "VISION_ENABLED", "VISION_MODEL_NAME", "VISION_MAX_SIZE", "VISION_JPEG_QUALITY",
+    "VISION_MIN_ELEMENTS", "VISION_FAILURE_STREAK", "VISION_MAX_PER_RUN",
+    "VISION_VERIFY_DONE", "VISION_SAVE_DIR",
 ]
 
 
@@ -35,8 +38,34 @@ def test_defaults_and_model_fallbacks(monkeypatch):
     assert settings.planner_model == settings.agent_model == "m"
     assert settings.confirm_risky is True and settings.max_steps == 30
     assert settings.shortcuts_dir == "shortcuts" and settings.shortcut_overlap == 0.75
+    assert settings.vision_enabled is False
+    assert settings.vision_max_size == 1024 and settings.vision_jpeg_quality == 70
+    assert settings.vision_min_elements == 3 and settings.vision_failure_streak == 2
+    assert settings.vision_max_per_run == 3 and settings.vision_verify_done is False
+    assert settings.vision_save_dir is None
     monkeypatch.setenv("AGENT_MODEL_NAME", "big")
     assert load_settings().agent_model == "big"
+    assert load_settings().vision_model == "big"
+    monkeypatch.setenv("VISION_MODEL_NAME", "vision")
+    assert load_settings().vision_model == "vision"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("VISION_MAX_SIZE", "255"),
+        ("VISION_MAX_SIZE", "2049"),
+        ("VISION_JPEG_QUALITY", "29"),
+        ("VISION_JPEG_QUALITY", "96"),
+        ("VISION_FAILURE_STREAK", "0"),
+        ("VISION_MAX_PER_RUN", "21"),
+    ],
+)
+def test_vision_ranges_are_validated(monkeypatch, name, value):
+    monkeypatch.setenv("API_KEY", "sk-real-key")
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ConfigError):
+        load_settings()
 
 
 def test_parsing_and_validation(monkeypatch):

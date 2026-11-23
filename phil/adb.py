@@ -19,6 +19,7 @@ import shlex
 import subprocess
 import time
 from collections.abc import Callable, Sequence
+from io import BytesIO
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ _COMMAND_TIMEOUT = 30.0
 _DUMP_TIMEOUT = 25.0
 _DUMP_ATTEMPTS = 3
 _DUMP_RETRY_DELAY = 0.5
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class DeviceError(RuntimeError):
@@ -216,6 +218,48 @@ class Device:
         if ok and isinstance(xml, str) and xml.strip():
             return xml
         return self._dump_via_adb()
+
+    def screenshot(self) -> bytes:
+        """Return the current display as PNG bytes, switching to ADB on uiautomator2 failure."""
+        def capture_u2(device: Any) -> bytes:
+            image = device.screenshot()
+            if isinstance(image, bytes):
+                data = image
+            else:
+                output = BytesIO()
+                image.save(output, format="PNG")
+                data = output.getvalue()
+            if not data.startswith(_PNG_SIGNATURE):
+                raise DeviceError("uiautomator2 returned corrupt screenshot data.")
+            return data
+
+        ok, data = self._via_u2("screenshot", capture_u2)
+        if ok:
+            return data
+
+        args = ["exec-out", "screencap", "-p"]
+        prefix = ["-s", self._serial] if self._serial else []
+        logger.debug("adb %s", " ".join([*prefix, *args]))
+        try:
+            completed = subprocess.run(
+                [self._adb_path, *prefix, *args],
+                capture_output=True,
+                timeout=_COMMAND_TIMEOUT,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise DeviceError(
+                f"ADB executable '{self._adb_path}' was not found. Install Android platform-tools "
+                "and make sure 'adb' is on your PATH (or set ADB_PATH in .env)."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise DeviceError("ADB screenshot command timed out.") from exc
+        if completed.returncode != 0:
+            detail = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise DeviceError(f"ADB screenshot command failed: {detail}")
+        if not completed.stdout.startswith(_PNG_SIGNATURE):
+            raise DeviceError("ADB returned corrupt screenshot data.")
+        return completed.stdout
 
     def _dump_via_adb(self) -> str:
         last_error = "no output"

@@ -15,10 +15,11 @@ from typing import Any
 
 from phil.adb import Device, DeviceError
 from phil.screen import Node, ScreenTracker
+from phil.vision import Screenshot
 
 logger = logging.getLogger(__name__)
 
-CONTROL_ACTIONS = frozenset({"confirm", "done", "stuck"})
+CONTROL_ACTIONS = frozenset({"confirm", "done", "stuck", "take_screenshot"})
 KEY_ACTIONS = frozenset({"home", "back", "recents", "enter"})
 STATUSBAR_ACTIONS: dict[str, str] = {
     "notifications": "expand-notifications",
@@ -32,7 +33,7 @@ DEVICE_ACTIONS = (
     TARGET_REQUIRED
     | KEY_ACTIONS
     | frozenset(STATUSBAR_ACTIONS)
-    | frozenset({"scroll_forward", "scroll_backward", "launch_app", "wait"})
+    | frozenset({"scroll_forward", "scroll_backward", "launch_app", "wait", "tap_xy"})
 )
 VALID_ACTIONS = DEVICE_ACTIONS | CONTROL_ACTIONS
 
@@ -87,6 +88,8 @@ class Action:
     package: str | None = None
     amount: float | None = None
     value: float | None = None
+    x: float | None = None
+    y: float | None = None
     summary: str = ""
     reason: str = ""
     plan_step_done: bool = False
@@ -123,6 +126,12 @@ class Action:
             raise ActionError("Action 'type' needs a 'text' value.")
         if name == "launch_app" and not package:
             raise ActionError("Action 'launch_app' needs a 'package' value.")
+        x = y = None
+        if name == "tap_xy":
+            x = _as_float(payload, "x")
+            y = _as_float(payload, "y")
+            if x is None or y is None:
+                raise ActionError("Action 'tap_xy' needs numeric 'x' and 'y' coordinates.")
 
         plan_done = payload.get("planStepDone", payload.get("plan_step_done"))
         return cls(
@@ -132,6 +141,8 @@ class Action:
             package=package,
             amount=_as_float(payload, "amount"),
             value=_as_float(payload, "value"),
+            x=x,
+            y=y,
             summary=str(payload.get("summary") or payload.get("message") or "").strip(),
             reason=str(payload.get("reason") or "").strip(),
             plan_step_done=_as_bool(plan_done),
@@ -140,7 +151,7 @@ class Action:
     def as_dict(self) -> dict[str, Any]:
         """The action's meaningful fields, used for history and repeat detection."""
         data: dict[str, Any] = {"action": self.name}
-        for key in ("target", "text", "package", "amount", "value"):
+        for key in ("target", "text", "package", "amount", "value", "x", "y"):
             value = getattr(self, key)
             if value is not None:
                 data[key] = value
@@ -208,8 +219,15 @@ class ActionExecutor:
         for action_name in STATUSBAR_ACTIONS:
             self._handlers[action_name] = self._statusbar
 
-    def execute(self, action: Action) -> ExecutionResult:
+    def execute(
+        self, action: Action, *, screenshot: Screenshot | None = None
+    ) -> ExecutionResult:
         """Perform ``action``. Device failures become a failed result instead of raising."""
+        if action.name == "tap_xy":
+            try:
+                return self._tap_xy(action, screenshot)
+            except DeviceError as exc:
+                return ExecutionResult(False, str(exc))
         handler = self._handlers.get(action.name)
         if handler is None:
             return ExecutionResult(False, f"'{action.name}' is not a device action.")
@@ -231,6 +249,33 @@ class ActionExecutor:
         return node
 
     # --------------------------------------------------------------- handlers
+
+    def _tap_xy(self, action: Action, screenshot: Screenshot | None) -> ExecutionResult:
+        if screenshot is None:
+            return ExecutionResult(False, "Cannot use tap_xy: no screenshot has been sent in this run.")
+        assert action.x is not None and action.y is not None
+        x, y = action.x, action.y
+        if not (0 <= x < screenshot.width and 0 <= y < screenshot.height):
+            return ExecutionResult(False, "tap_xy coordinates are outside the screenshot.")
+
+        bounds = self._tracker.screen_bounds()
+        if bounds is not None:
+            left, top, right, bottom = bounds
+            if (
+                right - left != screenshot.original_width
+                or bottom - top != screenshot.original_height
+            ):
+                return ExecutionResult(False, "Cannot use tap_xy: screen size changed since the screenshot.")
+        else:
+            left = top = 0
+            right, bottom = screenshot.original_width, screenshot.original_height
+
+        real_x = left + round(x * screenshot.scale_x)
+        real_y = top + round(y * screenshot.scale_y)
+        if not (left <= real_x < right and top <= real_y < bottom):
+            return ExecutionResult(False, "tap_xy coordinates map outside the current screen.")
+        self._device.tap(real_x, real_y)
+        return ExecutionResult(True, f"Tapped screenshot coordinates ({x:g}, {y:g}) at ({real_x}, {real_y}).")
 
     def _click(self, action: Action) -> ExecutionResult:
         node = self._resolve(action, climb=True)

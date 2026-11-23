@@ -32,6 +32,8 @@ from phil.config import ConfigError, Settings, load_settings
 from phil.log import setup_logging
 from phil.model import ModelClient
 from phil.shortcuts import Shortcut, ShortcutError, ShortcutStore
+from phil.runs import RunStore
+from phil.report import FRAME_NAMES, select_frame, write_report
 
 EXIT_OK = 0
 EXIT_TASK_FAILED = 1
@@ -96,6 +98,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--delete", dest="delete_shortcut", metavar="NAME",
         help="Delete a saved shortcut (asks for confirmation unless --yes is used).",
     )
+    parser.add_argument(
+        "--print-log", dest="print_log", type=int, choices=range(1, 7),
+        help="Build and open an HTML report for a time frame (1-6).",
+    )
+    parser.add_argument("--examples-report", action="store_true", help="Build a report from the included example records.")
+    parser.add_argument("--report-output", metavar="DIR", help="Folder for generated HTML reports.")
+    parser.add_argument("--no-open", action="store_true", help="Do not open the report in a browser.")
     parser.add_argument("--no-banner", action="store_true", help="Skip the startup banner.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
@@ -280,6 +289,30 @@ def _save_shortcut(agent: Agent, store: ShortcutStore, name: str) -> None:
     print(f"Saved shortcut {name!r}. Typed text is stored in plain text in the shortcut file.")
 
 
+def _generate_report(settings: Settings, choice: int, *, examples: bool = False, no_open: bool = False) -> int:
+    from phil.runs import RunRecordError
+    from pathlib import Path
+
+    source = Path("examples/runs") if examples else Path(settings.records_dir)
+    store = RunStore(source)
+    records = store.list_records()
+    if not examples:
+        records = select_frame(records, choice)
+    if not records:
+        print("No runs found in that time frame.")
+        return EXIT_OK
+    output = settings.report_output_dir or settings.reports_dir
+    path = write_report(
+        records,
+        output,
+        time_format=settings.time_format,
+        frame_name=FRAME_NAMES.get(choice, "Example records"),
+        open_browser=not no_open,
+    )
+    print(path)
+    return EXIT_OK
+
+
 def _interactive(agent: Agent, store: ShortcutStore) -> int:
     print(
         "Type a task and press Enter. Use 'save <name>', 'list', 'run <name|number>', "
@@ -324,6 +357,20 @@ def _interactive(agent: Agent, store: ShortcutStore) -> int:
             else:
                 print("Usage: delete <name|number>")
             continue
+        if task.lower() == "print log":
+            print("Choose a time frame:")
+            for number, name in FRAME_NAMES.items():
+                print(f"  {number}. {name}")
+            try:
+                choice = input("Time frame> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                continue
+            if choice.isdigit() and int(choice) in FRAME_NAMES:
+                _generate_report(agent._settings, int(choice))
+            else:
+                print("Choose a number from 1 to 6.")
+            continue
         _run_task(agent, task)
 
 
@@ -341,6 +388,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 or args.list_shortcuts
                 or args.run_shortcut
                 or args.delete_shortcut
+                or args.print_log
+                or args.examples_report
             )
         )
     except ConfigError as exc:
@@ -358,6 +407,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.delete_shortcut:
         _delete_shortcut(store, args.delete_shortcut, skip_confirmation=args.yes)
         return EXIT_OK
+    if args.examples_report:
+        output_override = args.report_output
+        if output_override:
+            settings = dataclasses.replace(settings, report_output_dir=output_override)
+        return _generate_report(settings, 1, examples=True, no_open=args.no_open)
+    if args.print_log:
+        if args.report_output:
+            settings = dataclasses.replace(settings, report_output_dir=args.report_output)
+        return _generate_report(settings, args.print_log, no_open=args.no_open)
 
     if not args.no_banner and not _print_banner():
         return EXIT_INTERRUPTED

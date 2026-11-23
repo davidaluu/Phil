@@ -444,6 +444,19 @@ class ScreenTracker:
         self._root = None
         self._elements = []
 
+    def element_snapshot(self) -> list[dict[str, object]]:
+        """Return pruned element positions and labels for run recording and wireframes."""
+        return [
+            {
+                "key": element.key,
+                "text": element.text,
+                "description": element.desc,
+                "bounds": list(element.node.bounds),
+                "traits": sorted(element.traits),
+            }
+            for element in self._elements
+        ]
+
     def update(self, xml_text: str) -> ScreenState:
         """Process a new hierarchy dump and decide what to send the model."""
         root = parse_hierarchy(xml_text)
@@ -547,6 +560,11 @@ class ScreenTracker:
         if not windows:
             return None
         return max(windows, key=lambda node: node.area).bounds
+
+    def full_tree_text(self) -> str:
+        """Return the current complete pruned tree, including stable target ids."""
+        body = _truncate_tree(self._elements) if self._elements else "(no elements detected)"
+        return f"Current UI Tree (full):\n{body}"
 
     def _match(self, wanted: str) -> list[Element]:
         lowered = wanted.casefold()

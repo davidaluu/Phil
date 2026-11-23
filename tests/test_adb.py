@@ -3,15 +3,15 @@
 """Drives the real Device class against a fake ``adb`` executable (plain-ADB backend)."""
 
 import stat
-import sys
 
 import pytest
+from PIL import Image
 
 from phil.adb import Device, DeviceError, list_devices
 from phil.screen import ScreenTracker
 from tests.helpers import sample_screen
 
-FAKE_ADB = '''#!{python}
+FAKE_ADB = '''#!/usr/bin/env python3
 import os, sys
 args = sys.argv[1:]
 log = os.environ["FAKE_ADB_LOG"]
@@ -22,6 +22,9 @@ if args[:1] == ["devices"]:
     print("List of devices attached")
     for line in os.environ.get("FAKE_ADB_DEVICES", "ABC123\\tdevice").split(";"):
         print(line)
+    sys.exit(0)
+if "screencap" in args:
+    sys.stdout.buffer.write(open(os.environ["FAKE_ADB_PNG"], "rb").read())
     sys.exit(0)
 if "exec-out" in args:
     print(open(os.environ["FAKE_ADB_XML"]).read())
@@ -36,13 +39,18 @@ sys.exit(0)
 @pytest.fixture
 def fake_adb(tmp_path, monkeypatch):
     script = tmp_path / "adb"
-    script.write_text(FAKE_ADB.format(python=sys.executable))
+    script.write_text(FAKE_ADB)
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     xml = tmp_path / "screen.xml"
     xml.write_text(sample_screen())
     log = tmp_path / "calls.log"
+    png = tmp_path / "screen.png"
+    image = Image.new("RGB", (4, 3), (10, 20, 30))
+    with png.open("wb") as file:
+        image.save(file, format="PNG")
     monkeypatch.setenv("FAKE_ADB_LOG", str(log))
     monkeypatch.setenv("FAKE_ADB_XML", str(xml))
+    monkeypatch.setenv("FAKE_ADB_PNG", str(png))
     return str(script), log
 
 
@@ -65,6 +73,32 @@ def test_dump_ui_extracts_clean_xml_that_the_tracker_can_read(fake_adb):
     xml = connected(fake_adb[0]).dump_ui()
     assert xml.startswith("<?xml") and xml.endswith("</hierarchy>")
     assert ScreenTracker().update(xml).element_count == 5
+
+
+def test_screenshot_uses_adb_and_validates_png_header(fake_adb, monkeypatch, tmp_path):
+    adb_path, log = fake_adb
+    device = connected(adb_path)
+    data = device.screenshot()
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    assert "exec-out screencap -p" in log.read_text()
+
+    bad_png = tmp_path / "bad.png"
+    bad_png.write_bytes(b"not a png")
+    monkeypatch.setenv("FAKE_ADB_PNG", str(bad_png))
+    with pytest.raises(DeviceError, match="corrupt"):
+        device.screenshot()
+
+
+def test_uiautomator_screenshot_failure_switches_to_adb(fake_adb):
+    class BrokenScreenshot:
+        def screenshot(self):
+            raise RuntimeError("screenshot unavailable")
+
+    device = connected(fake_adb[0])
+    device._u2 = BrokenScreenshot()
+
+    assert device.screenshot().startswith(b"\x89PNG\r\n\x1a\n")
+    assert device.backend == "adb"
 
 
 def test_gestures_become_adb_input_commands(fake_adb):

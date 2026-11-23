@@ -3,3 +3,4 @@ uiautomator2
 python-dotenv
 openai
 rich
+Pillow

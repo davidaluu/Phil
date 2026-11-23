@@ -131,6 +131,15 @@ class ShortcutStore:
             raise ShortcutError("Only a run that ended completed can be saved.")
         if run.password_type_targeted:
             raise ShortcutError("A run that typed into a password field cannot be saved.")
+        if any(
+            step.get("action", {}).get("action") == "tap_xy"
+            for step in run.steps
+            if isinstance(step, dict) and isinstance(step.get("action"), dict)
+        ):
+            raise ShortcutError(
+                "A run with tap_xy steps cannot be saved: coordinates are screen-specific, "
+                "and the element check would pass trivially on an empty tree."
+            )
 
         path = self._path(name)
         if path.exists() and not overwrite:

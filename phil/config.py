@@ -55,6 +55,23 @@ class Settings:
     always_send_full_tree: bool = False
     overlap_threshold: float = 0.4
     stuck_threshold: int = 4
+    records_dir: str = "records"
+    reports_dir: str = "reports"
+    summary_mode: str = "failed"
+    summary_model_name: str | None = None
+    hide_private_text: bool = False
+    retention_days: int = 7
+    time_format: str = "24"
+    report_output_dir: str | None = None
+    vision_enabled: bool = False
+    vision_model_name: str | None = None
+    vision_max_size: int = 1024
+    vision_jpeg_quality: int = 70
+    vision_min_elements: int = 3
+    vision_failure_streak: int = 2
+    vision_max_per_run: int = 3
+    vision_verify_done: bool = False
+    vision_save_dir: str | None = None
 
     @property
     def planner_model(self) -> str:
@@ -65,6 +82,11 @@ class Settings:
     def agent_model(self) -> str:
         """Model used to pick each next action."""
         return self.agent_model_name or self.model_name
+
+    @property
+    def vision_model(self) -> str:
+        """Model used for image requests, falling back through the action and default models."""
+        return self.vision_model_name or self.agent_model or self.model_name
 
 
 def _read(name: str) -> str | None:
@@ -147,6 +169,13 @@ def load_settings(*, require_api_key: bool = True) -> Settings:
     if temperature_raw is not None:
         temperature = _read_number("TEMPERATURE", 0.0, float, minimum=0.0, maximum=2.0)
 
+    summary_mode = (_read("RUN_SUMMARY") or "failed").lower()
+    if summary_mode not in {"failed", "every", "never"}:
+        raise ConfigError("RUN_SUMMARY must be failed, every, or never.")
+    time_format = (_read("TIME_FORMAT") or "24").lower()
+    if time_format not in {"24", "12"}:
+        raise ConfigError("TIME_FORMAT must be 24 or 12.")
+
     return Settings(
         api_key=api_key,
         api_base_url=_read("API_BASE_URL") or Settings.api_base_url,
@@ -173,4 +202,29 @@ def load_settings(*, require_api_key: bool = True) -> Settings:
         always_send_full_tree=_read_bool("ALWAYS_SEND_FULL_TREE", False),
         overlap_threshold=_read_number("OVERLAP_THRESHOLD", 0.4, float, minimum=0.0, maximum=1.0),
         stuck_threshold=_read_number("STUCK_THRESHOLD", 4, int, minimum=1, maximum=50),
+        records_dir=_read("RECORDS_DIR") or "records",
+        reports_dir=_read("REPORTS_DIR") or "reports",
+        summary_mode=summary_mode,
+        summary_model_name=_read("SUMMARY_MODEL_NAME"),
+        hide_private_text=_read_bool("HIDE_PRIVATE_TEXT", False),
+        retention_days=_read_number("RETENTION_DAYS", 7, int, minimum=1, maximum=3650),
+        time_format=time_format,
+        report_output_dir=_read("REPORT_OUTPUT_DIR"),
+        vision_enabled=_read_bool("VISION_ENABLED", False),
+        vision_model_name=_read("VISION_MODEL_NAME"),
+        vision_max_size=_read_number("VISION_MAX_SIZE", 1024, int, minimum=256, maximum=2048),
+        vision_jpeg_quality=_read_number(
+            "VISION_JPEG_QUALITY", 70, int, minimum=30, maximum=95
+        ),
+        vision_min_elements=_read_number(
+            "VISION_MIN_ELEMENTS", 3, int, minimum=0, maximum=1000
+        ),
+        vision_failure_streak=_read_number(
+            "VISION_FAILURE_STREAK", 2, int, minimum=1, maximum=50
+        ),
+        vision_max_per_run=_read_number(
+            "VISION_MAX_PER_RUN", 3, int, minimum=0, maximum=20
+        ),
+        vision_verify_done=_read_bool("VISION_VERIFY_DONE", False),
+        vision_save_dir=_read("VISION_SAVE_DIR"),
     )

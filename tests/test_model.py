@@ -2,10 +2,17 @@
 # Copyright (c) 2026 David Aluu
 from types import SimpleNamespace
 
+import httpx
+import openai
 import pytest
 
 from phil.config import Settings
-from phil.model import ModelClient, ModelResponseError, parse_json_object
+from phil.model import (
+    ModelClient,
+    ModelImageUnsupportedError,
+    ModelResponseError,
+    parse_json_object,
+)
 
 
 def test_parse_plain_fenced_and_chatty_json():
@@ -53,3 +60,40 @@ def test_json_mode_and_temperature_are_configurable():
 def test_empty_reply_raises():
     with pytest.raises(ModelResponseError):
         make_client("   ").complete("s", "u")
+
+
+def test_images_use_openai_compatible_content_parts_without_usage():
+    calls = []
+    client = make_client("{}", calls=calls)
+
+    client.complete_json("sys", "look", images=[b"jpeg-bytes"])
+
+    content = calls[0]["messages"][1]["content"]
+    assert content[0] == {"type": "text", "text": "look"}
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert client.last_usage == {"input_tokens": 0, "output_tokens": 0}
+
+
+def test_image_capability_rejection_has_specific_nonfatal_error():
+    response = httpx.Response(
+        400,
+        request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+    )
+    error = openai.BadRequestError(
+        "Image input is not supported",
+        response=response,
+        body={"error": "Image input is not supported"},
+    )
+
+    def create(**_kwargs):
+        raise error
+
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client = ModelClient(Settings(api_key="k"), client=fake)
+
+    with pytest.raises(ModelImageUnsupportedError) as raised:
+        client.complete("sys", "look", images=[b"secret image bytes"])
+
+    assert raised.value.fatal is False
+    assert "secret image bytes" not in str(raised.value)

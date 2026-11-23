@@ -100,6 +100,19 @@ def test_refuses_to_save_failed_or_password_runs(tmp_path, capture):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_refuses_to_save_tap_xy_shortcut(tmp_path):
+    capture = RunCapture(
+        "tap hidden control",
+        ["Tap hidden control"],
+        [{"action": {"action": "tap_xy", "x": 20, "y": 30}, "expects": []}],
+        True,
+    )
+
+    with pytest.raises(ShortcutError, match="screen-specific.*empty tree"):
+        ShortcutStore(tmp_path).save("unsafe", capture)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_run_records_successful_actions_and_password_target(tmp_path):
     password_screen = hierarchy(
         node(
@@ -135,7 +148,7 @@ def test_run_records_successful_actions_and_password_target(tmp_path):
 
 
 def test_successful_replay_makes_no_model_calls():
-    agent, device, model = _agent()
+    agent, device, model = _agent(vision_enabled=True)
 
     result = agent.run_shortcut(_shortcut())
 
@@ -143,6 +156,7 @@ def test_successful_replay_makes_no_model_calls():
     assert result.steps == 1
     assert device.taps == [(990, 2300)]
     assert model.prompts == []
+    assert device.screenshot_calls == 0
 
 
 def test_low_overlap_falls_back_with_replayed_history():
@@ -162,6 +176,22 @@ def test_low_overlap_falls_back_with_replayed_history():
     assert len(model.prompts) == 1
     assert "Action History:" in model.prompts[0]
     assert "-> OK:" in model.prompts[0]
+
+
+def test_shortcut_fallback_can_use_vision():
+    second_step = {"action": {"action": "back"}, "expects": ["id:not:present"]}
+    agent, device, model = _agent(
+        [{"action": "done", "summary": "Finished by AI"}],
+        vision_enabled=True,
+        vision_min_elements=10,
+    )
+    shortcut = _shortcut(steps=[_shortcut().steps[0], second_step])
+
+    result = agent.run_shortcut(shortcut)
+
+    assert result.success
+    assert device.screenshot_calls == 1
+    assert len(model.prompts) == 1 and model.images[0]
 
 
 def test_overlap_exactly_at_threshold_replays():

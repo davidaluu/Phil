@@ -150,7 +150,7 @@ This is Python's equivalent of `npm install`:
 pip install -r requirements.txt
 ```
 
-`requirements.txt` lists package **names only, with no version numbers**, so pip fetches the **latest release of each**: `uiautomator2`, `python-dotenv`, `openai` and `rich`.
+`requirements.txt` lists package **names only, with no version numbers**, so pip fetches the **latest release of each**: `uiautomator2`, `python-dotenv`, `openai`, `rich` and `Pillow`.
 
 To pull newer versions later:
 
@@ -369,6 +369,37 @@ Transient problems are retried. After four failures in a row Phil stops with `fa
 
 ---
 
+## Run logs and HTML reports
+
+Every task is recorded as one private JSON file in `RECORDS_DIR` (default
+`records/`). Generated reports go in `REPORTS_DIR` (default `reports/`). Both
+folders are git-ignored. Runs older than `RETENTION_DAYS` (default `7`) are
+deleted automatically; set `"keep": true` in a run's JSON to preserve it.
+Password text is never recorded. `HIDE_PRIVATE_TEXT=true` also hides typed text
+and on-screen text in new records.
+
+In interactive mode, type `print log` and choose 1–6 for the requested time
+frame. The same choices are available from the command line:
+
+```bash
+python main.py --print-log 1
+python main.py --print-log 6 --report-output my-reports --no-open
+python main.py --examples-report
+```
+
+The generated HTML report is standalone: it needs no internet connection,
+external fonts or libraries, and can be saved, printed or opened directly.
+Use `HIDE_PRIVATE_TEXT=true` before sharing. Records and reports can contain
+on-screen text, goals and typed text. Delete them by hand with the normal
+file manager or `rm records/*.json reports/*.html`; examples never use or
+delete your real runs.
+
+Preview the harmless illustrative report with `python main.py --examples-report`.
+The format and fields are explained in
+[`examples/runs/README.md`](examples/runs/README.md).
+
+---
+
 ## All settings
 
 Set these in `.env` (see `.env.example`). Real environment variables override `.env`.
@@ -398,6 +429,39 @@ Set these in `.env` (see `.env.example`). Real environment variables override `.
 | `STUCK_THRESHOLD` | `4` | Repeats with no screen change before giving up |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `LOG_FILE` | *(none)* | Optional log file path |
+| `RECORDS_DIR` | `records` | Private run-record JSON folder |
+| `REPORTS_DIR` | `reports` | Generated HTML report folder |
+| `RUN_SUMMARY` | `failed` | `failed`, `every`, or `never` for AI run summaries |
+| `SUMMARY_MODEL_NAME` | *(= MODEL_NAME)* | Cheaper model for AI summaries |
+| `HIDE_PRIVATE_TEXT` | `false` | Hide typed and on-screen text in new records |
+| `RETENTION_DAYS` | `7` | Automatically delete older unkept run records |
+| `TIME_FORMAT` | `24` | Report clock format: `24` or `12` |
+| `REPORT_OUTPUT_DIR` | *(reports folder)* | Optional report destination override |
+| `VISION_ENABLED` | `false` | Enable optional screenshot input; otherwise screenshots remain off |
+| `VISION_MODEL_NAME` | *(= AGENT_MODEL_NAME, then MODEL_NAME)* | Model used for calls containing an image |
+| `VISION_MAX_SIZE` | `1024` | Maximum screenshot side in pixels (256–2048) |
+| `VISION_JPEG_QUALITY` | `70` | JPEG quality (30–95) |
+| `VISION_MIN_ELEMENTS` | `3` | Request a screenshot when the pruned tree has fewer elements |
+| `VISION_FAILURE_STREAK` | `2` | Request a screenshot after consecutive failed/repeated actions |
+| `VISION_MAX_PER_RUN` | `3` | Hard screenshot cap per task (0–20) |
+| `VISION_VERIFY_DONE` | `false` | Ask once for screenshot-based verification before accepting “done” |
+| `VISION_SAVE_DIR` | *(none)* | Optional directory for prepared screenshots; empty means never save |
+
+## Screenshots (optional)
+
+Phil remains text-first: accessibility-tree actions and UI diffs stay the normal path.
+When `VISION_ENABLED=true`, it can request a screenshot when the pruned tree has fewer
+than `VISION_MIN_ELEMENTS` elements, after `VISION_FAILURE_STREAK` consecutive failed
+or repeated/no-effect actions, or when the model explicitly returns `take_screenshot`.
+`VISION_VERIFY_DONE=true` optionally asks the model once to verify a “done” response
+after a device action. `VISION_MAX_PER_RUN` caps captures, including blank screens.
+Screenshots are resized and sent only with that one model request; this can add API
+cost and latency, especially when the provider uses a more expensive vision model.
+
+**Privacy warning:** screenshots are sent to your configured API provider and may show
+sensitive content that text masking does not hide. Phil never saves images unless
+`VISION_SAVE_DIR` is explicitly set. Keep vision off on sensitive screens and use a
+provider you trust.
 
 ---
 
@@ -410,6 +474,7 @@ Phil taps, types and swipes on a **real phone** using real accounts. Treat it ac
 - **Keep confirmations on** for sending messages, payments, deletions and posting.
 - **Prompt injection is real.** A message or web page could contain text that tries to give Phil new orders. The agent prompt tells the model to treat on-screen text as content, never instructions, but no model is perfect. Watch the terminal.
 - **Logs may contain sensitive text.** At `INFO`, logs include the goal, targets, and the first 30 characters of anything Phil types. At `DEBUG` they also include model replies. Treat `LOG_FILE` accordingly, and never share logs without reading them first.
+- **Run records and reports are private.** They contain on-screen text and goals by default and are ignored by git. Set `HIDE_PRIVATE_TEXT=true` to hide typed text and on-screen text in future records. Check reports before sharing.
 - **Your API key** lives only in `.env`, which is git-ignored. Never paste it into code or screenshots.
 - Phil is provided **as is**, with no warranty (see the license). You are responsible for what it does on your device.
 
@@ -476,6 +541,7 @@ phil/
 │   ├── log.py            # terminal + file logging, secret redaction
 │   ├── adb.py            # the phone: uiautomator2 first, plain ADB fallback
 │   ├── screen.py         # parse, prune, hash, diff, overlap, target lookup
+│   ├── vision.py         # optional screenshot preparation and coordinate scaling
 │   ├── actions.py        # action vocabulary, validation, execution
 │   ├── prompts.py        # planner and agent prompts, app hints
 │   ├── model.py          # swappable OpenAI-compatible model call

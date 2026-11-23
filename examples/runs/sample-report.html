@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phil run report</title>
+<style>
+:root { color-scheme:light dark; --bg:#f4f6f9; --surface:#fff; --text:#202632; --muted:#687386; --line:#dce2ea; --accent:#1769aa; --accent-soft:#eaf3fb; --good:#25734a; --good-soft:#e9f5ee; --bad:#a83c3c; --bad-soft:#fbefed; --wire-bg:#f3f6f8; --wire-frame:#455568; --wire-tap:#d5e8f7; --wire-input:#fff; --wire-image:#e9eef3 }
+@media (prefers-color-scheme:dark) { :root { --bg:#10151d; --surface:#171f2a; --text:#e9eef5; --muted:#aab6c5; --line:#303c4b; --accent:#72b8f0; --accent-soft:#172b3b; --good:#77c99a; --good-soft:#1d3428; --bad:#f0978a; --bad-soft:#3c2829; --wire-bg:#e9eef2; --wire-frame:#536477; --wire-tap:#d2e7f7; --wire-input:#fff; --wire-image:#e5ebf0 } }
+* { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif }
+main { max-width:1160px; margin:auto; padding:32px clamp(16px,4vw,48px) 48px }
+h1,h2,h3 { line-height:1.2; letter-spacing:-.025em } h1 { font-size:clamp(1.8rem,4vw,2.4rem); margin:0 0 8px } h2 { font-size:1.35rem; margin-top:32px } h3 { font-size:1.2rem; margin:0 }
+.quiet,.run-meta { color:var(--muted) } .privacy { background:var(--surface); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px; padding:12px 16px; margin:20px 0 }
+.overview { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin:22px 0 }
+.stat-card { min-height:86px; display:flex; flex-direction:column; justify-content:center; gap:2px; padding:14px 16px; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:0 1px 2px #1723350b }
+.stat-card strong { font-size:1.4rem; letter-spacing:-.03em; font-variant-numeric:tabular-nums } .stat-card span { color:var(--muted); font-size:.84rem }
+.controls { display:flex; gap:8px; flex-wrap:wrap; margin:18px 0 } button { color:var(--accent); background:var(--surface); border:1px solid var(--line); border-radius:7px; padding:8px 12px; font:inherit; font-size:.9rem; cursor:pointer } button:hover { border-color:var(--accent); background:var(--accent-soft) } button:focus-visible,summary:focus-visible,a:focus-visible { outline:3px solid var(--accent); outline-offset:3px }
+table { width:100%; border-collapse:collapse; margin:12px 0 28px; background:var(--surface); border:1px solid var(--line); border-radius:10px; overflow:hidden } th,td { border-bottom:1px solid var(--line); padding:11px 12px; text-align:left; vertical-align:top } th { color:var(--muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.06em } tr:last-child td { border-bottom:0 } .failed-row { background:var(--bad-soft) } a { color:var(--accent); text-decoration:none } a:hover { text-decoration:underline }
+.day-heading { margin:34px 0 10px; color:var(--muted); font-size:.93rem; text-transform:uppercase; letter-spacing:.08em } .run { border:1px solid var(--line); border-radius:12px; padding:22px; margin:12px 0 22px; background:var(--surface); box-shadow:0 2px 6px #17233508 } .run-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:16px } .run-meta { display:flex; flex-wrap:wrap; gap:8px 18px; margin:10px 0; font-size:.88rem; font-variant-numeric:tabular-nums }
+.status-chip,.step-status { display:inline-flex; align-items:center; gap:6px; border-radius:99px; padding:4px 10px; font-size:.8rem; font-weight:650; white-space:nowrap } .status-ok,.step-ok { color:var(--good); background:var(--good-soft) } .status-bad,.step-bad { color:var(--bad); background:var(--bad-soft) } .step-recovered { color:var(--bad); background:var(--bad-soft) }
+.why { border:1px solid color-mix(in srgb,var(--bad) 32%,var(--line)); border-left:4px solid var(--bad); border-radius:9px; background:var(--bad-soft); padding:14px 16px; margin:16px 0; color:var(--text) } .why strong:first-child { display:inline-block; margin-bottom:5px; font-size:1rem } .summary { border-radius:8px; background:var(--bg); border:1px solid var(--line); padding:13px 16px }
+.timeline { list-style:none; padding:0 0 0 20px; margin:20px 0 0 10px; border-left:2px solid var(--line) } .step { position:relative; display:grid; grid-template-columns:190px minmax(0,1fr); gap:18px; padding:4px 0 22px; margin:0; break-inside:avoid }
+.step::before { content:""; position:absolute; left:-27px; top:7px; width:12px; height:12px; border:3px solid var(--surface); border-radius:50%; background:var(--good); box-shadow:0 0 0 1px var(--good) } .step.bad::before,.step.recovered::before { background:var(--bad); box-shadow:0 0 0 1px var(--bad) } .step.bad .step-sentence,.step.recovered .step-sentence { color:var(--bad) }
+.step-time { display:flex; flex-direction:column; align-items:flex-start; gap:3px; color:var(--muted); font-size:.84rem; font-variant-numeric:tabular-nums } .step-time strong { color:var(--text) } .gap { color:var(--muted); font-size:.78rem } .step-content { min-width:0 } .step-status { margin:0 0 6px } .step-sentence { margin:0 0 10px; font-size:1.03rem; font-weight:570 } .step-facts { display:grid; gap:4px; color:var(--muted); font-size:.83rem; overflow-wrap:anywhere } .step-facts strong { color:var(--text) }
+.screen-view-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:start; gap:12px; margin-top:14px } details { min-width:0; border-top:1px solid var(--line); padding-top:9px } summary { list-style:none; color:var(--accent); cursor:pointer; font-size:.88rem; font-weight:580 } summary::-webkit-details-marker { display:none } summary .arrow { display:inline-block; width:17px } details[open] summary .arrow { transform:rotate(90deg) }
+.elements-box { max-height:320px; overflow:auto; border:1px solid var(--line); border-radius:7px; background:var(--bg); padding:10px; margin-top:8px } pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace }
+.wire-panel[open] { position:sticky; top:12px; align-self:start } .wireframe-wrap { position:relative; margin-top:8px; border:1px solid var(--line); border-radius:9px; padding:12px; background:var(--bg); text-align:center } .wireframe { display:flex; justify-content:center; align-items:center; height:min(75vh,680px); width:100%; overflow:visible } .phone-svg { display:block; width:auto; height:100%; max-width:100%; object-fit:contain; overflow:visible }
+.phone-frame { fill:var(--wire-frame) } .phone-screen { fill:var(--wire-bg); stroke:#c5d0dc; stroke-width:2 } .element-tap rect { fill:var(--wire-tap); stroke:var(--accent); stroke-width:4 } .element-input rect { fill:var(--wire-input); stroke:#718295; stroke-width:3 } .element-input text { text-decoration:underline } .element-text rect { fill:transparent; stroke:transparent } .element-image rect { fill:var(--wire-image); stroke:#aab7c5; stroke-width:3; stroke-dasharray:10 8 } .element-target rect { stroke:var(--accent); stroke-width:9; fill:var(--accent-soft) } .phone-svg text { fill:#263546; font:600 1em system-ui,sans-serif; pointer-events:none } .phone-svg g:focus { outline:none } .phone-svg g:focus rect { stroke:var(--accent); stroke-width:10 } .tap-marker circle { fill:#fff; stroke:var(--accent); stroke-width:8 } .tap-marker .marker-core { fill:var(--accent); stroke:#fff; stroke-width:2 } .tap-marker.failed circle { fill:#fff; stroke:#aa3535; stroke-width:9 } .tap-marker.failed .marker-core { fill:#aa3535; stroke:#fff } .wire-legend { display:flex; justify-content:center; flex-wrap:wrap; gap:10px; color:var(--muted); font-size:.72rem; margin-top:7px } .wire-legend span { display:inline-flex; align-items:center; gap:4px } .wire-legend i { display:inline-block; width:11px; height:11px; border:1px solid var(--accent); border-radius:3px; background:var(--wire-tap) } .wire-legend .legend-input { background:var(--wire-input); border-radius:0 0 2px 2px; border-width:1px 1px 2px } .wire-legend .legend-image { background:var(--wire-image); border-style:dashed } .wire-legend .legend-marker { width:10px; height:10px; border:2px solid var(--accent); border-radius:50%; background:#fff } .marker-failed-word { color:var(--bad); font-weight:700 }
+.enlarge-button { margin-top:8px; font-size:.8rem } dialog { width:min(92vw,720px); max-width:92vw; max-height:88vh; padding:14px; border:1px solid var(--line); border-radius:12px; color:var(--text); background:var(--surface) } dialog::backdrop { background:#101820aa } .dialog-close { display:block; margin:0 0 10px auto } .dialog-wireframe { height:min(75vh,720px); border:0; background:transparent }
+footer { border-top:1px solid var(--line); margin-top:32px; padding:18px 24px; color:var(--muted); text-align:center }
+@media(max-width:850px) { main { padding:20px 16px 36px } .overview { grid-template-columns:repeat(3,minmax(0,1fr)) } .screen-view-grid { grid-template-columns:minmax(0,1fr) } .wire-panel[open] { position:static } .wireframe { height:min(75vh,620px) } .phone-svg { margin:auto } }
+@media(max-width:560px) { .overview { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px } .stat-card { min-height:74px; padding:10px 12px } .run { padding:16px 12px } .run-heading { flex-direction:column; gap:8px } table { display:block; overflow-x:auto } .step { grid-template-columns:minmax(0,1fr); gap:8px } .step-time { display:grid; grid-template-columns:1fr auto; align-items:center } .step-time .gap { grid-column:1/-1 } .wireframe { height:min(75vh,560px) } }
+@media print { :root { color-scheme:light; --bg:#fff; --surface:#fff; --text:#000; --muted:#333; --line:#999; --accent:#000; --accent-soft:#fff; --good:#000; --good-soft:#fff; --bad:#000; --bad-soft:#fff } body { background:#fff;color:#000 } .controls,button { display:none!important } .run { box-shadow:none } .screen-view-grid { grid-template-columns:1fr 1fr } details { display:block } details:not([open]) > * { display:block } details > summary { display:none } .elements-box { max-height:none; overflow:visible } .wireframe { height:75vh } .step { break-inside:avoid; page-break-inside:avoid } footer { position:fixed; bottom:0; left:0; right:0; background:#fff } }
+</style>
+</head>
+<body>
+<main>
+<h1>Phil run report</h1>
+<p class="quiet"><strong>Generated:</strong> 22:17:26 · UTC+01:00</p>
+<p><strong>Time range:</strong> Saturday, 21 November 2026 · 20:30:00 · UTC+01:00 to Sunday, 22 November 2026 · 19:00:06 · UTC+01:00<br><span class="quiet">Example records</span></p>
+<p class="privacy">This report may contain text that was on your phone's screen. Check it before you share it.</p>
+<div class="overview">
+<div class="stat-card"><strong>2</strong><span>Runs</span></div>
+<div class="stat-card"><strong>1</strong><span>Completed</span></div>
+<div class="stat-card"><strong>1</strong><span>Did not complete</span></div>
+<div class="stat-card"><strong>7</strong><span>Steps</span></div>
+<div class="stat-card"><strong>11.6 s</strong><span>Time</span></div>
+<div class="stat-card"><strong>550</strong><span>Tokens</span></div>
+</div>
+<div class="controls">
+<button type="button" id="saveCopy">Save a copy</button><button type="button" id="printPdf">Print / Save as PDF</button>
+<button type="button" id="failedOnly">Show failed only</button><button type="button" id="allRuns">Show all runs</button>
+</div>
+<h2>Runs</h2>
+<table><thead><tr><th>Start time</th><th>Task</th><th>Status</th><th>Steps</th><th>Time</th><th>Tokens</th></tr></thead><tbody><tr class="" data-status="completed"><td><a href="#20261122T190000-example-complete">19:00:00 · UTC+01:00</a></td><td>Turn on evening color</td><td><strong>Completed</strong></td><td>2</td><td>6.2 s</td><td>240</td></tr><tr class="failed-row" data-status="stuck"><td><a href="#20261121T203000-example-stuck">20:30:00 · UTC+01:00</a></td><td>Open the made-up forecast</td><td><strong>Stuck</strong></td><td>5</td><td>5.4 s</td><td>310</td></tr></tbody></table>
+<h2 class="day-heading">Sunday, 22 November 2026</h2><section class="run " id="20261122T190000-example-complete"><div class="run-heading"><h3>Turn on evening color</h3><span class="status-chip status-ok">✓ Completed</span></div><div class="run-meta"><span>Started 19:00:00 · UTC+01:00</span><span>Ended 19:00:06 · UTC+01:00</span><span>6.2 seconds</span></div><p><strong>Final status:</strong> Completed</p><p class="summary"><strong>AI-written summary</strong><br>Phil opened the Evening color setting and completed the task.</p><div class="screen-controls"><button type="button" data-expand-run>Expand all screens</button><button type="button" data-collapse-run>Collapse all screens</button></div><ol class="timeline"><li class="step "><div class="step-time"><strong>19:00:02 · UTC+01:00</strong><span>took 1.1 s</span></div><div class="step-content"><div class="step-status step-ok">✓ OK</div><p class="step-sentence">Tapped &#x27;id:madeup:id/evening&#x27;. The tap completed.</p><div class="step-facts"><span><strong>Action:</strong> {&quot;action&quot;: &quot;click&quot;, &quot;target&quot;: &quot;id:madeup:id/evening&quot;, &quot;reason&quot;: &quot;Open the setting&quot;, &quot;summary_line&quot;: &quot;click target=&#x27;id:madeup:id/evening&#x27;&quot;}</span><span><strong>Result:</strong> OK</span><span><strong>Guards:</strong> No special guards</span></div><div class="screen-view-grid"><details class="screen-panel elements-panel"><summary><span class="arrow">▶</span> Show screen elements</summary><div class="elements-box"><pre>[
+  {
+    &quot;key&quot;: &quot;id:madeup:id/evening&quot;,
+    &quot;text&quot;: &quot;Evening color&quot;,
+    &quot;description&quot;: &quot;&quot;,
+    &quot;bounds&quot;: [
+      100,
+      400,
+      980,
+      520
+    ],
+    &quot;traits&quot;: [
+      &quot;clickable&quot;
+    ]
+  }
+]</pre></div></details><details class="screen-panel wire-panel"><summary><span class="arrow">▶</span> Show wireframe</summary><div class="wireframe-wrap"><div class="wireframe"><svg class="phone-svg" viewBox="-24 -24 1128 2448" role="img" aria-label="Phone screen wireframe"><rect class="phone-frame" x="-18" y="-18" width="1116" height="2436" rx="64.8"/><rect class="phone-screen" x="0" y="0" width="1080" height="2400" rx="48.6"/><g class="element-tap element-target" tabindex="0" role="img" aria-label="Evening color · id:madeup:id/evening"><title>Evening color · id:madeup:id/evening</title><rect x="100" y="400" width="880" height="120" rx="8.14"/><text x="112.95" y="442.55" style="font-size:37px">Evening color</text></g><g class="tap-marker" aria-label="Phil tapped here"><title>Phil tapped here</title><circle cx="540" cy="460" r="20.35"/><circle class="marker-core" cx="540" cy="460" r="5.55"/></g></svg><div class="wire-legend"><span><i class="legend-tap"></i>Tap target</span><span><i class="legend-input"></i>Input</span><span><i class="legend-image"></i>Image</span><span><i class="legend-marker"></i>Phil tapped</span></div></div><button class="enlarge-button" type="button" data-enlarge>Enlarge</button></div></details></div></div></li><li class="step "><div class="step-time"><strong>19:00:04 · UTC+01:00</strong><span>took 0.8 s</span><span class="gap"> 2.0 s between steps</span></div><div class="step-content"><div class="step-status step-ok">✓ OK</div><p class="step-sentence">Ran done. Evening color is enabled</p><div class="step-facts"><span><strong>Action:</strong> {&quot;action&quot;: &quot;done&quot;, &quot;summary&quot;: &quot;Evening color is enabled&quot;, &quot;reason&quot;: &quot;&quot;, &quot;summary_line&quot;: &quot;done&quot;}</span><span><strong>Result:</strong> OK</span><span><strong>Guards:</strong> No special guards</span></div><div class="screen-view-grid"><details class="screen-panel elements-panel"><summary><span class="arrow">▶</span> Show screen elements</summary><div class="elements-box"><pre>[]</pre></div></details><details class="screen-panel wire-panel"><summary><span class="arrow">▶</span> Show wireframe</summary><div class="wireframe-wrap"><div class="wireframe"><svg class="phone-svg" viewBox="-24 -24 1128 2448" role="img" aria-label="Phone screen wireframe"><rect class="phone-frame" x="-18" y="-18" width="1116" height="2436" rx="64.8"/><rect class="phone-screen" x="0" y="0" width="1080" height="2400" rx="48.6"/></svg><div class="wire-legend"><span><i class="legend-tap"></i>Tap target</span><span><i class="legend-input"></i>Input</span><span><i class="legend-image"></i>Image</span><span><i class="legend-marker"></i>Phil tapped</span></div></div><button class="enlarge-button" type="button" data-enlarge>Enlarge</button></div></details></div></div></li></ol></section><h2 class="day-heading">Saturday, 21 November 2026</h2><section class="run not-completed" id="20261121T203000-example-stuck"><div class="run-heading"><h3>Open the made-up forecast</h3><span class="status-chip status-bad">• Stuck</span></div><div class="run-meta"><span>Started 20:30:00 · UTC+01:00</span><span>Ended 20:30:05 · UTC+01:00</span><span>5.4 seconds</span></div><p><strong>Final status:</strong> Stuck</p><div class="why"><strong>Why it stopped</strong><br>The repeat guard stopped Phil because the Forecast action was repeated 5 times and the screen did not change.<br><strong>Last action:</strong> click target=&#x27;Forecast&#x27;</div><p class="summary"><strong>Plain-language summary</strong><br>Phil tried the same forecast control repeatedly while the screen stayed the same. The repeat guard stopped the run.</p><div class="screen-controls"><button type="button" data-expand-run>Expand all screens</button><button type="button" data-collapse-run>Collapse all screens</button></div><ol class="timeline"><li class="step "><div class="step-time"><strong>20:30:01 · UTC+01:00</strong><span>took 0.9 s</span></div><div class="step-content"><div class="step-status step-ok">✓ OK</div><p class="step-sentence">Tapped &#x27;Forecast&#x27;. The screen looked the same afterwards, so Phil treated the tap as done and moved on.</p><div class="step-facts"><span><strong>Action:</strong> {&quot;action&quot;: &quot;click&quot;, &quot;target&quot;: &quot;Forecast&quot;, &quot;reason&quot;: &quot;Open forecast&quot;, &quot;summary_line&quot;: &quot;click target=&#x27;Forecast&#x27;&quot;}</span><span><strong>Result:</strong> OK</span><span><strong>Guards:</strong> No special guards</span></div><div class="screen-view-grid"><details class="screen-panel elements-panel"><summary><span class="arrow">▶</span> Show screen elements</summary><div class="elements-box"><pre>[
+  {
+    &quot;key&quot;: &quot;text:Forecast&quot;,
+    &quot;text&quot;: &quot;Forecast&quot;,
+    &quot;description&quot;: &quot;&quot;,
+    &quot;bounds&quot;: [
+      100,
+      300,
+      900,
+      420
+    ],
+    &quot;traits&quot;: [
+      &quot;clickable&quot;
+    ]
+  }
+]</pre></div></details><details class="screen-panel wire-panel"><summary><span class="arrow">▶</span> Show wireframe</summary><div class="wireframe-wrap"><div class="wireframe"><svg class="phone-svg" viewBox="-24 -24 1128 2448" role="img" aria-label="Phone screen wireframe"><rect class="phone-frame" x="-18" y="-18" width="1116" height="2436" rx="64.8"/><rect class="phone-screen" x="0" y="0" width="1080" height="2400" rx="48.6"/><g class="element-tap" tabindex="0" role="img" aria-label="Forecast · text:Forecast"><title>Forecast · text:Forecast</title><rect x="100" y="300" width="800" height="120" rx="8.14"/><text x="112.95" y="342.55" style="font-size:37px">Forecast</text></g></svg><div class="wire-legend"><span><i class="legend-tap"></i>Tap target</span><span><i class="legend-input"></i>Input</span><span><i class="legend-image"></i>Image</span><span><i class="legend-marker"></i>Phil tapped</span></div></div><button class="enlarge-button" type="button" data-enlarge>Enlarge</button></div></details></div></div></li><li class="step bad"><div class="step-time"><strong>20:30:03 · UTC+01:00</strong><span>took 0.7 s</span><span class="gap"> 2.0 s between steps</span></div><div class="step-content"><div class="step-status step-bad">! Failed</div><p class="step-sentence">Tried to use &#x27;Forecast&#x27;, but the action failed: The tap was delivered, but the screen did not change.</p><div class="step-facts"><span><strong>Action:</strong> {&quot;action&quot;: &quot;click&quot;, &quot;target&quot;: &quot;Forecast&quot;, &quot;reason&quot;: &quot;Try again&quot;, &quot;summary_line&quot;: &quot;click target=&#x27;Forecast&#x27;&quot;}</span><span><strong>Result:</strong> FAILED</span><span><strong>Guards:</strong> repeat guard · stuck counter</span></div><div class="screen-view-grid"><details class="screen-panel elements-panel"><summary><span class="arrow">▶</span> Show screen elements</summary><div class="elements-box"><pre>[]</pre></div></details><details class="screen-panel wire-panel"><summary><span class="arrow">▶</span> Show wireframe</summary><div class="wireframe-wrap"><div class="wireframe"><svg class="phone-svg" viewBox="-24 -24 1128 2448" role="img" aria-label="Phone screen wireframe"><rect class="phone-frame" x="-18" y="-18" width="1116" height="2436" rx="64.8"/><rect class="phone-screen" x="0" y="0" width="1080" height="2400" rx="48.6"/></svg><div class="wire-legend"><span><i class="legend-tap"></i>Tap target</span><span><i class="legend-input"></i>Input</span><span><i class="legend-image"></i>Image</span><span><i class="legend-marker"></i>Phil tapped</span><span class="marker-failed-word">Action failed</span></div></div><button class="enlarge-button" type="button" data-enlarge>Enlarge</button></div></details></div></div></li></ol></section>
+</main>
+<footer>Copyright © 2026 David Aluu</footer>
+<dialog id="wireframeDialog" aria-label="Enlarged phone wireframe">
+<button type="button" class="dialog-close">Close</button>
+<div class="dialog-wireframe"></div>
+</dialog>
+<script>
+document.querySelectorAll("details").forEach(function(d){
+  d.addEventListener("toggle",function(){
+    var summary=d.querySelector("summary");
+    var label=d.classList.contains("wire-panel")?"wireframe":"screen elements";
+    if(d.open){
+      summary.innerHTML='<span class="arrow">▼</span> Hide ' + label;
+    } else {
+      summary.innerHTML='<span class="arrow">▶</span> Show ' + label;
+    }
+  });
+});
+document.querySelectorAll("[data-expand-run]").forEach(function(b){b.addEventListener("click",function(){
+  b.closest(".run").querySelectorAll("details").forEach(function(d){d.open=true});
+});});
+document.querySelectorAll("[data-collapse-run]").forEach(function(b){b.addEventListener("click",function(){
+  b.closest(".run").querySelectorAll("details").forEach(function(d){d.open=false});
+});});
+document.getElementById("failedOnly").addEventListener("click",function(){
+  document.querySelectorAll("tbody tr").forEach(function(r){r.style.display=r.classList.contains("failed-row")?"table-row":"none";});
+});
+document.getElementById("allRuns").addEventListener("click",function(){
+  document.querySelectorAll("tbody tr").forEach(function(r){r.style.display="table-row";});
+});
+document.getElementById("saveCopy").addEventListener("click",function(){
+  var blob=new Blob(["<!doctype html>\n"+document.documentElement.outerHTML],{type:"text/html"});
+  var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="phil-report.html";a.click();URL.revokeObjectURL(a.href);
+});
+document.getElementById("printPdf").addEventListener("click",function(){window.print();});
+var wireDialog=document.getElementById("wireframeDialog");
+document.querySelectorAll("[data-enlarge]").forEach(function(b){b.addEventListener("click",function(){
+  var source=b.closest(".wireframe-wrap").querySelector(".wireframe");
+  var copy=source.cloneNode(true);copy.classList.add("dialog-wireframe");
+  wireDialog.querySelector(".dialog-wireframe").replaceWith(copy);
+  wireDialog.showModal();
+});});
+wireDialog.querySelector(".dialog-close").addEventListener("click",function(){wireDialog.close();});
+wireDialog.addEventListener("click",function(event){if(event.target===wireDialog)wireDialog.close();});
+</script>
+</body></html>

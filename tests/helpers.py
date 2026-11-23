@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import io
 from typing import Any
+
+from PIL import Image, ImageDraw
 
 APP = "com.example.app"
 KEYBOARD = "com.google.android.inputmethod.latin"
@@ -99,8 +102,12 @@ def sample_screen(entry_text: str = "", extra: str = "") -> str:
 class FakeDevice:
     """Records every gesture; serves queued screen dumps (the last one repeats)."""
 
-    def __init__(self, screens: list[str] | None = None) -> None:
+    def __init__(
+        self, screens: list[str] | None = None, *, screenshots: list[bytes] | None = None
+    ) -> None:
         self.screens = list(screens or [sample_screen()])
+        self.screenshots = list(screenshots or [])
+        self.screenshot_calls = 0
         self.taps: list[tuple[int, int]] = []
         self.long_presses: list[tuple[int, int]] = []
         self.swipes: list[tuple[int, int, int, int]] = []
@@ -108,6 +115,16 @@ class FakeDevice:
         self.typed: list[str] = []
         self.launched: list[str] = []
         self.statusbar_calls: list[str] = []
+
+    def screenshot(self) -> bytes:
+        self.screenshot_calls += 1
+        if self.screenshots:
+            return self.screenshots.pop(0)
+        image = Image.new("RGB", (1080, 2400), (235, 235, 235))
+        ImageDraw.Draw(image).rectangle((20, 20, 100, 100), fill=(20, 80, 140))
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        return output.getvalue()
 
     def dump_ui(self) -> str:
         return self.screens.pop(0) if len(self.screens) > 1 else self.screens[0]
@@ -140,11 +157,22 @@ class FakeModel:
     def __init__(self, responses: list[Any]) -> None:
         self._responses = list(responses)
         self.prompts: list[str] = []
+        self.system_prompts: list[str] = []
+        self.images: list[list[bytes] | None] = []
+        self.models: list[str | None] = []
 
     def complete_json(
-        self, system_prompt: str, user_prompt: str, *, model: str | None = None
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        model: str | None = None,
+        images: list[bytes] | None = None,
     ) -> dict[str, Any]:
         self.prompts.append(user_prompt)
+        self.system_prompts.append(system_prompt)
+        self.images.append(images)
+        self.models.append(model)
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item

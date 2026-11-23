@@ -4,7 +4,8 @@ import pytest
 
 from phil.actions import Action, ActionError, ActionExecutor
 from phil.screen import ScreenTracker
-from tests.helpers import APP, FakeDevice, sample_screen
+from phil.vision import Screenshot
+from tests.helpers import APP, FakeDevice, hierarchy, node, sample_screen
 
 
 def make_executor():
@@ -98,3 +99,52 @@ def test_set_progress_taps_proportionally():
     executor, device = make_executor()
     executor.execute(Action(name="set_progress", target=f"{APP}:id/entry", value=0.5))
     assert device.taps == [(450, 2300)]
+
+
+def _small_executor():
+    tracker = ScreenTracker()
+    tracker.update(
+        hierarchy(node("android.widget.FrameLayout", bounds="[0,0][200,400]"))
+    )
+    device = FakeDevice()
+    return ActionExecutor(device, tracker), device
+
+
+def test_tap_xy_maps_sent_coordinates_to_real_pixels():
+    executor, device = _small_executor()
+    screenshot = Screenshot(
+        b"jpeg",
+        "image/jpeg",
+        100,
+        200,
+        200,
+        400,
+        2,
+        2,
+    )
+
+    result = executor.execute(Action(name="tap_xy", x=30, y=40), screenshot=screenshot)
+
+    assert result.ok
+    assert device.taps == [(60, 80)]
+
+
+def test_tap_xy_rejects_missing_screenshot_and_out_of_bounds():
+    executor, device = _small_executor()
+
+    assert not executor.execute(Action(name="tap_xy", x=1, y=1)).ok
+    screenshot = Screenshot(b"jpeg", "image/jpeg", 100, 200, 200, 400, 2, 2)
+    result = executor.execute(Action(name="tap_xy", x=100, y=1), screenshot=screenshot)
+
+    assert not result.ok and "outside" in result.detail
+    assert device.taps == []
+
+
+def test_tap_xy_rejects_screen_size_change():
+    executor, device = make_executor()
+    screenshot = Screenshot(b"jpeg", "image/jpeg", 100, 200, 200, 400, 2, 2)
+
+    result = executor.execute(Action(name="tap_xy", x=10, y=10), screenshot=screenshot)
+
+    assert not result.ok and "screen size changed" in result.detail
+    assert device.taps == []

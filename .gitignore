@@ -1,6 +1,11 @@
 # Secrets
 .env
 /shortcuts/
+/records/
+/reports/
+/screenshots/
+trace/
+traces/
 
 # Python
 __pycache__/
