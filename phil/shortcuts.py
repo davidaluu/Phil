@@ -12,7 +12,7 @@ import re
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +40,7 @@ class RunCapture:
     steps: list[dict[str, Any]]
     completed: bool
     password_type_targeted: bool = False
+    success_criteria: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class Shortcut:
     created: str
     aliases: list[str]
     version: int = SHORTCUT_VERSION
+    success_criteria: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         """Return the persisted JSON shape."""
@@ -64,6 +66,7 @@ class Shortcut:
             "plan": self.plan,
             "created": self.created,
             "steps": self.steps,
+            "success_criteria": list(self.success_criteria),
         }
 
 
@@ -152,6 +155,7 @@ class ShortcutStore:
             plan=list(run.plan),
             created=datetime.now(timezone.utc).isoformat(),
             steps=list(run.steps),
+            success_criteria=list(run.success_criteria),
         )
         self.directory.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -217,6 +221,7 @@ class ShortcutStore:
         plan = raw.get("plan")
         aliases = raw.get("aliases")
         steps = raw.get("steps")
+        success_criteria = raw.get("success_criteria", [])
         if (
             raw.get("version") != SHORTCUT_VERSION
             or not isinstance(name, str)
@@ -227,6 +232,8 @@ class ShortcutStore:
             or not isinstance(aliases, list)
             or not all(isinstance(item, str) for item in aliases)
             or not isinstance(steps, list)
+            or not isinstance(success_criteria, list)
+            or not all(isinstance(item, str) for item in success_criteria)
         ):
             raise ShortcutError(f"Shortcut {path.name!r} has an unsupported or invalid format.")
         validated_steps: list[dict[str, Any]] = []
@@ -251,6 +258,7 @@ class ShortcutStore:
             created=created,
             aliases=list(aliases),
             version=SHORTCUT_VERSION,
+            success_criteria=list(success_criteria),
         )
 
 

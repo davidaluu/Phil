@@ -19,7 +19,7 @@ from phil.vision import Screenshot
 
 logger = logging.getLogger(__name__)
 
-CONTROL_ACTIONS = frozenset({"confirm", "done", "stuck", "take_screenshot"})
+CONTROL_ACTIONS = frozenset({"confirm", "done", "stuck", "replan", "take_screenshot"})
 KEY_ACTIONS = frozenset({"home", "back", "recents", "enter"})
 STATUSBAR_ACTIONS: dict[str, str] = {
     "notifications": "expand-notifications",

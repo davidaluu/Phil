@@ -8,6 +8,7 @@ from phil.config import ConfigError, load_settings
 _VARS = [
     "API_KEY", "API_BASE_URL", "MODEL_NAME", "PLANNER_MODEL_NAME", "AGENT_MODEL_NAME",
     "JSON_MODE", "TEMPERATURE", "MAX_STEPS", "CONFIRM_RISKY", "LOG_LEVEL",
+    "MAX_PLAN_STEPS", "MAX_REPLAN_ATTEMPTS", "MAX_VERIFICATION_ATTEMPTS",
     "IGNORED_PACKAGES", "STABILIZE_DELAY", "SHORTCUTS_DIR", "SHORTCUT_OVERLAP",
     "OVERLAP_THRESHOLD", "STUCK_THRESHOLD",
     "VISION_ENABLED", "VISION_MODEL_NAME", "VISION_MAX_SIZE", "VISION_JPEG_QUALITY",
@@ -37,6 +38,9 @@ def test_defaults_and_model_fallbacks(monkeypatch):
     settings = load_settings()
     assert settings.planner_model == settings.agent_model == "m"
     assert settings.confirm_risky is True and settings.max_steps == 30
+    assert settings.max_plan_steps == 20
+    assert settings.max_replan_attempts == 3
+    assert settings.max_verification_attempts == 3
     assert settings.shortcuts_dir == "shortcuts" and settings.shortcut_overlap == 0.75
     assert settings.vision_enabled is False
     assert settings.vision_max_size == 1024 and settings.vision_jpeg_quality == 70

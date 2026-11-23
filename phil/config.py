@@ -48,6 +48,9 @@ class Settings:
     log_level: str = "INFO"
     log_file: str | None = None
     max_steps: int = 30
+    max_plan_steps: int = 20
+    max_replan_attempts: int = 3
+    max_verification_attempts: int = 3
     stabilize_delay: float = 1.0
     shortcuts_dir: str = "shortcuts"
     shortcut_overlap: float = 0.75
@@ -193,6 +196,13 @@ def load_settings(*, require_api_key: bool = True) -> Settings:
         log_level=log_level,
         log_file=_read("LOG_FILE"),
         max_steps=_read_number("MAX_STEPS", 30, int, minimum=1, maximum=500),
+        max_plan_steps=_read_number("MAX_PLAN_STEPS", 20, int, minimum=1, maximum=100),
+        max_replan_attempts=_read_number(
+            "MAX_REPLAN_ATTEMPTS", 3, int, minimum=0, maximum=20
+        ),
+        max_verification_attempts=_read_number(
+            "MAX_VERIFICATION_ATTEMPTS", 3, int, minimum=1, maximum=20
+        ),
         stabilize_delay=_read_number("STABILIZE_DELAY", 1.0, float, minimum=0.0, maximum=10.0),
         shortcuts_dir=_read("SHORTCUTS_DIR") or "shortcuts",
         shortcut_overlap=_read_number(

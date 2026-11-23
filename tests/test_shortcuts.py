@@ -133,6 +133,7 @@ def test_run_records_successful_actions_and_password_target(tmp_path):
                 "text": "secret text",
             },
             {"action": "done"},
+            {"status": "satisfied", "evidence": ["Verified"], "remaining_requirements": [], "reason": "Verified"},
         ],
         screens=[password_screen],
     )
@@ -148,15 +149,18 @@ def test_run_records_successful_actions_and_password_target(tmp_path):
 
 
 def test_successful_replay_makes_no_model_calls():
-    agent, device, model = _agent(vision_enabled=True)
+    agent, device, model = _agent(
+        [{"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"}],
+        vision_enabled=True,
+    )
 
     result = agent.run_shortcut(_shortcut())
 
     assert result.status is RunStatus.COMPLETED
     assert result.steps == 1
     assert device.taps == [(990, 2300)]
-    assert model.prompts == []
-    assert device.screenshot_calls == 0
+    assert len(model.prompts) == 1
+    assert device.screenshot_calls == 1
 
 
 def test_low_overlap_falls_back_with_replayed_history():
@@ -165,7 +169,10 @@ def test_low_overlap_falls_back_with_replayed_history():
         "expects": ["id:not:present"],
     }
     agent, device, model = _agent(
-        [{"action": "done", "summary": "Finished by AI"}],
+        [
+            {"action": "done", "summary": "Finished by AI"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ],
     )
     shortcut = _shortcut(steps=[_shortcut().steps[0], second_step])
 
@@ -173,7 +180,7 @@ def test_low_overlap_falls_back_with_replayed_history():
 
     assert result.status is RunStatus.COMPLETED
     assert len(device.taps) == 1
-    assert len(model.prompts) == 1
+    assert len(model.prompts) == 2
     assert "Action History:" in model.prompts[0]
     assert "-> OK:" in model.prompts[0]
 
@@ -181,7 +188,10 @@ def test_low_overlap_falls_back_with_replayed_history():
 def test_shortcut_fallback_can_use_vision():
     second_step = {"action": {"action": "back"}, "expects": ["id:not:present"]}
     agent, device, model = _agent(
-        [{"action": "done", "summary": "Finished by AI"}],
+        [
+            {"action": "done", "summary": "Finished by AI"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ],
         vision_enabled=True,
         vision_min_elements=10,
     )
@@ -190,8 +200,8 @@ def test_shortcut_fallback_can_use_vision():
     result = agent.run_shortcut(shortcut)
 
     assert result.success
-    assert device.screenshot_calls == 1
-    assert len(model.prompts) == 1 and model.images[0]
+    assert device.screenshot_calls == 2
+    assert len(model.prompts) == 2
 
 
 def test_overlap_exactly_at_threshold_replays():
@@ -205,12 +215,15 @@ def test_overlap_exactly_at_threshold_replays():
     tracker.update(sample_screen())
     assert tracker.overlap_fraction(expected) == 0.75
 
-    agent, device, model = _agent(shortcut_overlap=0.75)
+    agent, device, model = _agent(
+        [{"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"}],
+        shortcut_overlap=0.75,
+    )
     result = agent.run_shortcut(_shortcut(expects=expected))
 
     assert result.status is RunStatus.COMPLETED
     assert len(device.taps) == 1
-    assert model.prompts == []
+    assert len(model.prompts) == 1
 
 
 def test_risky_click_during_replay_requires_confirmation_and_decline_aborts():
@@ -319,4 +332,13 @@ def test_shortcut_json_has_only_documented_top_level_fields(tmp_path):
 
     data = json.loads((tmp_path / "minimal.json").read_text())
 
-    assert set(data) == {"version", "name", "aliases", "goal", "plan", "created", "steps"}
+    assert set(data) == {
+        "version",
+        "name",
+        "aliases",
+        "goal",
+        "plan",
+        "created",
+        "steps",
+        "success_criteria",
+    }

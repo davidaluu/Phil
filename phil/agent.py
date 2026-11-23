@@ -25,6 +25,10 @@ from phil.prompts import (
     build_agent_user_prompt,
     build_planner_prompt,
     build_planner_user_prompt,
+    build_replan_prompt,
+    build_replan_user_prompt,
+    build_verification_prompt,
+    build_verification_user_prompt,
 )
 from phil.runs import RunRecorder, RunStore, timestamp_now
 from phil.screen import ScreenError, ScreenState, ScreenTracker
@@ -33,7 +37,7 @@ from phil.vision import Screenshot, pillow_available, prepare_screenshot, save_s
 
 logger = logging.getLogger(__name__)
 
-MAX_PLAN_STEPS = 10
+MAX_PLAN_STEPS = 20
 HISTORY_WINDOW = 10
 MAX_CONSECUTIVE_ERRORS = 4
 _OBSERVE_RETRY_SECONDS = 1.0
@@ -97,6 +101,7 @@ class _RunContext:
 
     goal: str
     plan: list[str]
+    success_criteria: list[str] = field(default_factory=list)
     plan_index: int = 0
     history: list[str] = field(default_factory=list)
     errors: int = 0
@@ -114,6 +119,8 @@ class _RunContext:
     device_action_count: int = 0
     last_screenshot_action_count: int = -1
     done_verification_attempted: bool = False
+    replan_attempts: int = 0
+    verification_attempts: int = 0
     repeat_vision_checkpoint: int = 0
     error_vision_checkpoint: int = 0
 
@@ -191,8 +198,13 @@ class Agent:
             self._log_vision_summary()
             return result
 
+        criteria = getattr(self, "_last_success_criteria", [])
+        logger.info("[PLANNER] Generated %d initial steps.", len(plan))
+        logger.info("[PLANNER] Defined %d success criteria.", len(criteria))
+        for criterion in criteria:
+            logger.info("[PLANNER] Success criterion: %s", criterion)
         logger.info("Plan:\n%s", "\n".join(f"  {i}. {step}" for i, step in enumerate(plan, 1)))
-        ctx = _RunContext(goal=goal, plan=plan)
+        ctx = _RunContext(goal=goal, plan=plan, success_criteria=criteria)
         result = self._loop(ctx)
         self._capture_run(ctx, result)
         self._finish_record(ctx=ctx, result=result)
@@ -205,7 +217,11 @@ class Agent:
         self._recorder = RunRecorder(self._run_store, shortcut.goal, mode="shortcut")
         self._run_store.ensure()
         plan = list(shortcut.plan) or [shortcut.goal]
-        ctx = _RunContext(goal=shortcut.goal, plan=plan)
+        ctx = _RunContext(
+            goal=shortcut.goal,
+            plan=plan,
+            success_criteria=list(shortcut.success_criteria) or [shortcut.goal],
+        )
         outcome = replay_shortcut(
             shortcut,
             self._tracker,
@@ -221,7 +237,23 @@ class Agent:
         ctx.completed_steps = len(outcome.replayed_steps)
 
         if outcome.completed:
-            result = RunResult(RunStatus.COMPLETED, ctx.completed_steps, "Shortcut completed.")
+            ctx.plan_index = min(len(ctx.plan) - 1, ctx.completed_steps)
+            screen = self._observe(ctx)
+            if isinstance(screen, RunResult):
+                result = screen
+            else:
+                fresh_screen = screen or self._tracker.update(self._device.dump_ui())
+                verified = self._verify_goal(ctx, fresh_screen, ctx.completed_steps)
+                if isinstance(verified, RunResult):
+                    result = verified
+                elif verified is None:
+                    result = self._loop(ctx)
+                else:
+                    result = RunResult(
+                        RunStatus.STUCK,
+                        ctx.completed_steps,
+                        "Shortcut goal could not be verified.",
+                    )
         elif outcome.aborted:
             result = RunResult(RunStatus.ABORTED, ctx.completed_steps, outcome.reason)
         else:
@@ -355,6 +387,7 @@ class Agent:
             steps=list(ctx.recorded_steps),
             completed=result.success,
             password_type_targeted=ctx.password_type_targeted,
+            success_criteria=list(ctx.success_criteria),
         )
 
     def _complete_recorded_json(
@@ -614,6 +647,7 @@ class Agent:
 
     def _make_plan(self, goal: str) -> list[str]:
         """Ask the planner model for steps; fall back to a one-step plan if its reply is unusable."""
+        self._last_success_criteria: list[str] = []
         try:
             payload = self._complete_recorded_json(
                 self._planner_prompt,
@@ -635,7 +669,182 @@ class Agent:
         if not steps:
             logger.warning("Planner returned an empty plan; using the goal as a single step.")
             return [goal]
-        return steps[:MAX_PLAN_STEPS]
+        raw_criteria = payload.get("success_criteria")
+        if isinstance(raw_criteria, list):
+            self._last_success_criteria = [
+                str(item).strip()
+                for item in raw_criteria
+                if isinstance(item, str) and item.strip()
+            ]
+        if not self._last_success_criteria:
+            logger.warning(
+                "Planner returned no reliable success criteria; "
+                "verification will remain conservative."
+            )
+        return steps[:self._settings.max_plan_steps]
+
+    def _replan(self, ctx: _RunContext, screen: ScreenState, step: int, reason: str) -> RunResult | None:
+        """Revise the remaining plan without changing the original goal or success criteria."""
+        if ctx.replan_attempts >= self._settings.max_replan_attempts:
+            logger.warning(
+                "[PLANNER] Replan limit reached (%d/%d).",
+                ctx.replan_attempts,
+                self._settings.max_replan_attempts,
+            )
+            return RunResult(
+                RunStatus.STUCK,
+                step,
+                f"Cannot continue reliably after {ctx.replan_attempts} replanning attempts. {reason}",
+            )
+
+        ctx.replan_attempts += 1
+        logger.info(
+            "[PLANNER] Revising remaining plan (replan %d/%d): %s",
+            ctx.replan_attempts,
+            self._settings.max_replan_attempts,
+            reason,
+        )
+        try:
+            payload = self._complete_recorded_json(
+                build_replan_prompt(),
+                build_replan_user_prompt(
+                    ctx.goal,
+                    ctx.success_criteria,
+                    ctx.plan,
+                    ctx.plan_index,
+                    ctx.history[-HISTORY_WINDOW:],
+                    self._tracker.full_tree_text(),
+                    reason,
+                ),
+                model=self._settings.planner_model,
+                purpose="replan",
+            )
+        except ModelError as exc:
+            logger.error("[PLANNER] Replanning failed: %s", exc)
+            if exc.fatal:
+                return RunResult(RunStatus.FAILED, step, f"Model error while replanning: {exc}")
+            return RunResult(
+                RunStatus.STUCK,
+                step,
+                f"Could not revise the plan safely: {exc}",
+            )
+
+        raw_plan = payload.get("plan")
+        if not isinstance(raw_plan, list):
+            return RunResult(RunStatus.STUCK, step, "Replanner returned a malformed plan.")
+        replacement = [
+            str(item).strip()
+            for item in raw_plan
+            if isinstance(item, str) and item.strip()
+        ][:self._settings.max_plan_steps]
+        if not replacement:
+            return RunResult(RunStatus.STUCK, step, "Replanner returned no usable remaining steps.")
+
+        completed = ctx.plan[:ctx.plan_index]
+        ctx.plan = completed + replacement
+        ctx.plan_index = len(completed)
+        if ctx.plan_index >= len(ctx.plan):
+            ctx.plan_index = max(0, len(ctx.plan) - 1)
+        logger.info("[PLANNER] Added/revised %d remaining steps.", len(replacement))
+        logger.info(
+            "[PLANNER] Replans used %d, remaining %d.",
+            ctx.replan_attempts,
+            max(0, self._settings.max_replan_attempts - ctx.replan_attempts),
+        )
+        return None
+
+    def _verify_goal(
+        self, ctx: _RunContext, screen: ScreenState, step: int
+    ) -> RunResult | None:
+        """Independently verify the immutable original goal against fresh UI evidence."""
+        logger.info("[VERIFIER] Checking the original user goal.")
+        ctx.verification_attempts += 1
+        if ctx.verification_attempts > self._settings.max_verification_attempts:
+            logger.warning(
+                "[VERIFIER] Verification limit reached (%d).",
+                ctx.verification_attempts - 1,
+            )
+            return RunResult(
+                RunStatus.STUCK,
+                step,
+                "Goal could not be verified after the configured verification attempts.",
+            )
+
+        try:
+            fresh = self._observe(ctx)
+        except Exception:
+            fresh = None
+        if isinstance(fresh, RunResult):
+            return fresh
+        if fresh is not None:
+            screen = fresh
+
+        screenshot = self._capture_screenshot(ctx, "verify_done", step) if self._vision_enabled else None
+        try:
+            payload = self._complete_recorded_json(
+                build_verification_prompt(),
+                build_verification_user_prompt(
+                    ctx.goal,
+                    ctx.success_criteria,
+                    ctx.history[-HISTORY_WINDOW:],
+                    self._tracker.full_tree_text(),
+                ),
+                model=self._settings.agent_model,
+                purpose="verify",
+                images=[screenshot.bytes] if screenshot else None,
+            )
+        except ModelError as exc:
+            logger.error("[VERIFIER] Verification model call failed: %s", exc)
+            if exc.fatal:
+                return RunResult(RunStatus.FAILED, step, f"Model error during verification: {exc}")
+            return RunResult(RunStatus.STUCK, step, f"Goal verification failed: {exc}")
+
+        status = str(payload.get("status", "")).strip().lower()
+        evidence = payload.get("evidence")
+        remaining = payload.get("remaining_requirements")
+        evidence_list = [
+            str(item).strip()
+            for item in evidence
+            if isinstance(item, str) and item.strip()
+        ] if isinstance(evidence, list) else []
+        remaining_list = [
+            str(item).strip()
+            for item in remaining
+            if isinstance(item, str) and item.strip()
+        ] if isinstance(remaining, list) else []
+        reason = str(payload.get("reason") or "").strip()
+
+        logger.info("[VERIFIER] Status: %s.", status.upper() or "UNCERTAIN")
+        for item in evidence_list:
+            logger.info("[VERIFIER] Evidence: %s", item)
+        for item in remaining_list:
+            logger.info("[VERIFIER] Missing requirement: %s", item)
+
+        if status == "satisfied" and evidence_list and not remaining_list:
+            logger.info("[PHIL] Goal completed successfully.")
+            return RunResult(RunStatus.COMPLETED, step, reason or "Verified: the original goal was achieved.")
+        if status == "incomplete":
+            missing = "; ".join(remaining_list) or reason or "The original goal remains incomplete."
+            replan_result = self._replan(ctx, screen, step, missing)
+            if replan_result is not None:
+                return replan_result
+            ctx.history.append(f"{len(ctx.history) + 1}. verification incomplete -> replanned: {missing}")
+            return None
+        if status == "uncertain":
+            ctx.history.append(
+                f"{len(ctx.history) + 1}. verification uncertain -> "
+                f"{reason or 'insufficient observable evidence'}"
+            )
+        else:
+            logger.warning("[VERIFIER] Malformed verification response.")
+        if ctx.verification_attempts >= self._settings.max_verification_attempts:
+            return RunResult(
+                RunStatus.STUCK,
+                step,
+                "Goal remains unverified: observable evidence was insufficient.",
+            )
+        logger.info("[VERIFIER] Attempting recovery or another observation.")
+        return None
 
     # -------------------------------------------------------------------- loop
 
@@ -665,18 +874,6 @@ class Agent:
                 return RunResult(action.status, step, action.message)
             if action is None:
                 continue
-            if (
-                action.name == "done"
-                and self._vision_enabled
-                and self._settings.vision_verify_done
-                and not ctx.done_verification_attempted
-                and ctx.last_screenshot_action_count < ctx.device_action_count
-            ):
-                verified = self._verify_done(ctx, screen, step)
-                if isinstance(verified, RunResult):
-                    return RunResult(verified.status, step, verified.message)
-                if verified is not None:
-                    action = verified
             logger.info(
                 "Action: %s%s",
                 action.summary_line(),
@@ -747,6 +944,7 @@ class Agent:
                 ctx.history[-HISTORY_WINDOW:],
                 self._tracker.full_tree_text() if screenshot else screen.prompt_text,
                 just_confirmed=just_confirmed,
+                success_criteria=ctx.success_criteria,
             )
             just_confirmed = False
             started = time.perf_counter()
@@ -824,11 +1022,23 @@ class Agent:
 
         if action.name == "done":
             message = action.summary or "Goal reached."
-            logger.info("Done: %s", message)
+            logger.info("[EXECUTOR] Done action received; starting independent verification.")
             self._capture_action_step(
                 ctx, action, screen, step, True, message, {}, None, step_started
             )
-            return RunResult(RunStatus.COMPLETED, step, message)
+            return self._verify_goal(ctx, screen, step)
+
+        if action.name == "replan":
+            reason = (
+                action.reason
+                or action.summary
+                or "The execution agent detected that the plan needs revision."
+            )
+            logger.info("[EXECUTOR] Unexpected state detected; replanning requested.")
+            self._capture_action_step(
+                ctx, action, screen, step, True, reason, {"replan": True}, None, step_started
+            )
+            return self._replan(ctx, screen, step, reason)
 
         if action.name == "stuck":
             message = action.reason or action.summary or "The model reported it is stuck."
@@ -847,30 +1057,30 @@ class Agent:
             and action.signature == ctx.unchanged_click_signature
         ):
             ctx.repeats += 1
-            if (
-                self._vision_can_capture(ctx)
-                and ctx.repeats >= self._settings.vision_failure_streak
-                and ctx.repeats > ctx.repeat_vision_checkpoint
-            ):
-                return None
             ctx.history.append(
                 f"{len(ctx.history) + 1}. {action.signature} -> "
-                "Already clicked; the UI tree doesn't show this change. "
-                "Treat it as done and go to the next step."
+                "Already clicked; the UI tree remains unchanged. Inspect the resulting state "
+                "without assuming success."
             )
-            logger.info("Skipped duplicate click; UI was unchanged after the previous tap.")
+            logger.info("[EXECUTOR] Unchanged click remains ambiguous; action not advanced.")
             self._capture_action_step(
                 ctx,
                 action,
                 screen,
                 step,
-                True,
-                "Duplicate tap skipped.",
-                {"duplicate_tap_skipped": True},
+                False,
+                "Repeated unchanged click skipped.",
+                {"unchanged_click": True, "duplicate_tap_skipped": True},
                 None,
                 step_started,
             )
-            return self._advance_plan(ctx, step)
+            if ctx.repeats >= self._settings.stuck_threshold:
+                return RunResult(
+                    RunStatus.STUCK,
+                    step,
+                    "The same click remains unchanged and the resulting state could not be established.",
+                )
+            return None
 
         if self._is_repeating(ctx, action, screen):
             if (
@@ -949,14 +1159,16 @@ class Agent:
                     ctx.history.append(
                         f"{len(ctx.history) + 1}. "
                         "Already clicked; the UI tree doesn't show this change. "
-                        "Treat it as done and go to the next step."
+                        "Treat the result as ambiguous and inspect the current state."
                     )
-                    ctx.history.append(
-                        f"{len(ctx.history) + 1}. "
-                        "clicked; no visible UI change; toggles often don't change the UI tree; "
-                        "treat as applied."
+                    logger.warning(
+                        "[EXECUTOR] Click produced no visible UI change; state is ambiguous."
                     )
-                    return self._advance_plan(ctx, step)
+                    if action.plan_step_done:
+                        logger.info(
+                            "[EXECUTOR] Plan step done ignored after unchanged click; no success assumed."
+                        )
+                    return None
 
                 ctx.unchanged_click_signature = None
                 self._capture_action_step(
@@ -1007,11 +1219,20 @@ class Agent:
             return None
 
     def _advance_plan(self, ctx: _RunContext, step: int) -> RunResult | None:
-        """Complete the current plan step and stop if it was the final step."""
+        """Address the current plan step; verify when it was the final step."""
         ctx.plan_index += 1
         if ctx.plan_index >= len(ctx.plan):
-            logger.info("Final plan step completed.")
-            return RunResult(RunStatus.COMPLETED, step, "All plan steps completed.")
+            logger.info("[EXECUTOR] Remaining plan completed.")
+            logger.info("[VERIFIER] Plan exhaustion reached; verifying the original goal.")
+            try:
+                fresh = self._observe(ctx)
+            except Exception:
+                fresh = None
+            if isinstance(fresh, RunResult):
+                return fresh
+            if fresh is None:
+                fresh = self._tracker.update(self._device.dump_ui())
+            return self._verify_goal(ctx, fresh, step)
         logger.info(
             "Plan step done. Next: %d/%d %s",
             ctx.plan_index + 1,

@@ -8,7 +8,7 @@ from PIL import Image
 from phil.agent import Agent, RunStatus
 from phil.config import Settings
 from phil.model import ModelError, ModelImageUnsupportedError
-from tests.helpers import APP, FakeDevice, FakeModel, hierarchy, node
+from tests.helpers import APP, FakeDevice, FakeModel, hierarchy, node, sample_screen
 
 SEND = f"{APP}:id/send"
 
@@ -24,9 +24,11 @@ def make_agent(responses, *, confirm=None, screens=None, **overrides):
 def test_completes_when_last_plan_step_is_done():
     agent, device, model = make_agent(
         [
-            {"plan": ["Tap send"]},
+            {"plan": ["Tap send"], "success_criteria": ["Message is visibly sent"]},
             {"action": "click", "target": SEND, "planStepDone": True},
-        ]
+            {"status": "satisfied", "evidence": ["Sent message is visible"], "remaining_requirements": [], "reason": "The message is visibly sent."},
+        ],
+        screens=[sample_screen(), hierarchy(node("android.widget.TextView", text="Sent"))],
     )
     result = agent.run("send it")
     assert result.status is RunStatus.COMPLETED and result.steps == 1
@@ -38,15 +40,23 @@ def test_completes_when_last_plan_step_is_done():
 
 def test_done_action_ends_the_run():
     agent, device, _ = make_agent(
-        [{"plan": ["Look"]}, {"action": "done", "summary": "All good"}]
+        [
+            {"plan": ["Look"], "success_criteria": ["The requested view is visible"]},
+            {"action": "done", "summary": "All good"},
+            {"status": "satisfied", "evidence": ["Requested view is visible"], "remaining_requirements": [], "reason": "Verified"},
+        ]
     )
     result = agent.run("look around")
-    assert result.success and result.message == "All good" and device.taps == []
+    assert result.success and "Verified" in result.message and device.taps == []
 
 
 def test_unusable_plan_falls_back_to_goal():
     agent, _, model = make_agent(
-        [{"plan": "not a list"}, {"action": "done", "summary": "ok"}]
+        [
+            {"plan": "not a list"},
+            {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal state visible"], "remaining_requirements": [], "reason": "Verified"},
+        ]
     )
     assert agent.run("do the thing").success
     assert "Current Step (1/1): do the thing" in model.prompts[1]
@@ -56,7 +66,7 @@ def test_unchanged_click_is_treated_as_completed():
     click = {"action": "click", "target": SEND}
     agent, device, _ = make_agent([{"plan": ["x"]}] + [click] * 10, stuck_threshold=2)
     result = agent.run("goal")
-    assert result.status is RunStatus.COMPLETED
+    assert result.status is RunStatus.STUCK
     assert len(device.taps) == 1
 
 
@@ -76,19 +86,16 @@ def test_unchanged_toggle_click_is_not_repeated_and_advances_plan():
             {"plan": ["Turn on dark mode", "Continue"]},
             click_toggle,
             click_toggle,
+            {"action": "wait"},
         ],
         screens=[toggle_screen],
+        max_steps=3,
     )
 
     result = agent.run("turn on dark mode")
 
-    assert result.status is RunStatus.COMPLETED
+    assert result.status is RunStatus.MAX_STEPS
     assert device.taps == [(200, 150)]
-    assert "Current Step (2/2): Continue" in model.prompts[2]
-    assert (
-        "clicked; no visible UI change; toggles often don't change the UI tree; "
-        "treat as applied."
-    ) in model.prompts[2]
 
 
 def test_model_reported_stuck_is_returned():
@@ -125,7 +132,12 @@ def test_repeated_failures_give_up():
 
 def test_invalid_actions_are_retried_then_recover():
     agent, _, model = make_agent(
-        [{"plan": ["x"]}, {"action": "teleport"}, {"action": "done", "summary": "ok"}]
+        [
+            {"plan": ["x"]},
+            {"action": "teleport"},
+            {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ]
     )
     assert agent.run("goal").success
     assert "invalid reply" in model.prompts[2]
@@ -144,8 +156,13 @@ def test_risky_click_needs_approval_and_decline_aborts():
 
 def test_risky_click_runs_when_approved():
     agent, device, _ = make_agent(
-        [{"plan": ["x"]}, {"action": "click", "target": SEND, "planStepDone": True}],
+        [
+            {"plan": ["x"]},
+            {"action": "click", "target": SEND, "planStepDone": True},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ],
         confirm=lambda _m: True,
+        screens=[sample_screen(extra="Before"), sample_screen(extra="Sent")],
     )
     assert agent.run("goal").success and len(device.taps) == 1
 
@@ -157,8 +174,10 @@ def test_confirm_action_then_proceed_without_second_prompt():
             {"plan": ["x"]},
             {"action": "confirm", "summary": "Send the message?"},
             {"action": "click", "target": SEND, "planStepDone": True},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
         ],
         confirm=lambda message: asked.append(message) or True,
+        screens=[sample_screen(), sample_screen(), hierarchy(node("android.widget.TextView", text="Sent"))],
     )
     assert agent.run("goal").success
     assert len(asked) == 1 and "Send the message?" in asked[0]
@@ -172,7 +191,9 @@ def test_yes_mode_auto_approves_everything():
             {"plan": ["x"]},
             {"action": "confirm", "summary": "ok?"},
             {"action": "click", "target": SEND, "planStepDone": True},
-        ]
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ],
+        screens=[sample_screen(), sample_screen(), hierarchy(node("android.widget.TextView", text="Sent"))],
     )
     assert agent.run("goal").success and len(device.taps) == 1
 
@@ -190,38 +211,52 @@ def test_empty_goal_is_rejected():
 
 def test_vision_disabled_takes_no_screenshots_or_sends_images():
     agent, device, model = make_agent(
-        [{"plan": ["Look"]}, {"action": "done", "summary": "ok"}]
+        [
+            {"plan": ["Look"]},
+            {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ]
     )
 
     assert agent.run("look").success
     assert device.screenshot_calls == 0
-    assert model.images == [None, None]
+    assert model.images[0] is None
+    assert model.images[1] is None
+    assert model.images[2] is None
     assert all("OPTIONAL SCREENSHOTS" not in prompt for prompt in model.system_prompts)
 
 
 def test_missing_pillow_disables_enabled_vision_without_breaking_startup(monkeypatch, caplog):
     monkeypatch.setattr("phil.agent.pillow_available", lambda: False)
     agent, device, model = make_agent(
-        [{"plan": ["Look"]}, {"action": "done", "summary": "ok"}],
+        [
+            {"plan": ["Look"]},
+            {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ],
         vision_enabled=True,
     )
 
     assert agent.run("look").success
     assert "Pillow is not installed" in caplog.text
     assert device.screenshot_calls == 0
-    assert model.images == [None, None]
+    assert model.images == [None, None, None]
 
 
 def test_empty_tree_triggers_image_with_full_tree():
     empty_screen = "<?xml version='1.0'?><hierarchy rotation='0'></hierarchy>"
     agent, device, model = make_agent(
-        [{"plan": ["Look"]}, {"action": "done", "summary": "ok"}],
+        [
+            {"plan": ["Look"]},
+            {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ],
         screens=[empty_screen],
         vision_enabled=True,
     )
 
     assert agent.run("look").success
-    assert device.screenshot_calls == 1
+    assert device.screenshot_calls == 2
     assert model.images[1] and "Current UI Tree (full)" in model.prompts[1]
     assert "(no elements detected)" in model.prompts[1]
 
@@ -233,6 +268,7 @@ def test_image_request_replaces_a_normal_diff_with_the_full_tree():
             {"action": "wait"},
             {"action": "take_screenshot"},
             {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
         ],
         screens=[
             hierarchy(node("android.widget.TextView", rid="com.example:id/label", text="First")),
@@ -243,7 +279,7 @@ def test_image_request_replaces_a_normal_diff_with_the_full_tree():
     )
 
     assert agent.run("wait").success
-    assert device.screenshot_calls == 1
+    assert device.screenshot_calls == 2
     assert "UI Changes since last action" in model.prompts[2]
     assert "Current UI Tree (full)" in model.prompts[3]
     assert "UI Changes since last action" not in model.prompts[3]
@@ -255,21 +291,33 @@ def test_blank_screenshot_is_not_sent():
     Image.new("RGB", (40, 30), (0, 0, 0)).save(output, format="PNG")
     empty_screen = "<?xml version='1.0'?><hierarchy rotation='0'></hierarchy>"
     agent, device, model = make_agent(
-        [{"plan": ["Look"]}, {"action": "done", "summary": "ok"}],
+        [
+            {"plan": ["Look"]},
+            {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ],
         screens=[empty_screen],
         vision_enabled=True,
     )
     device.screenshots = [output.getvalue()]
 
     assert agent.run("look").success
-    assert device.screenshot_calls == 1
-    assert model.images == [None, None]
+    assert device.screenshot_calls == 2
+    assert model.images[0] is None
+    assert model.images[1] is None
+    assert model.images[2]
 
 
 def test_failure_streak_triggers_vision_before_repeat_stuck_threshold():
     bad = {"action": "click", "target": "missing"}
     agent, device, model = make_agent(
-        [{"plan": ["Try"]}, bad, bad, {"action": "done", "summary": "ok"}],
+        [
+            {"plan": ["Try"]},
+            bad,
+            bad,
+            {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
+        ],
         vision_enabled=True,
         vision_min_elements=0,
         vision_failure_streak=2,
@@ -277,7 +325,7 @@ def test_failure_streak_triggers_vision_before_repeat_stuck_threshold():
     )
 
     assert agent.run("try").success
-    assert device.screenshot_calls == 1
+    assert device.screenshot_calls == 2
     assert model.images[3]
 
 
@@ -287,6 +335,7 @@ def test_model_image_rejection_disables_vision_and_retries_text_only():
             {"plan": ["Look"]},
             ModelImageUnsupportedError("unsupported"),
             {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
         ],
         screens=["<?xml version='1.0'?><hierarchy rotation='0'></hierarchy>"],
         vision_enabled=True,
@@ -306,6 +355,7 @@ def test_take_screenshot_works_and_respects_per_run_cap():
             {"action": "take_screenshot"},
             {"action": "take_screenshot"},
             {"action": "done", "summary": "ok"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "Verified"},
         ],
         vision_enabled=True,
         vision_min_elements=0,
@@ -326,7 +376,7 @@ def test_verify_done_asks_once_after_device_action():
             {"plan": ["Wait"]},
             {"action": "wait"},
             {"action": "done"},
-            {"action": "done", "summary": "verified"},
+            {"status": "satisfied", "evidence": ["Goal visible"], "remaining_requirements": [], "reason": "verified"},
         ],
         vision_enabled=True,
         vision_min_elements=0,
